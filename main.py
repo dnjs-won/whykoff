@@ -57,19 +57,26 @@ def main():
     parser.add_argument("--init-db", action="store_true", help="Initialize or migrate database schema from schema.sql")
     args = parser.parse_args()
 
+    # 1. DB 초기화 옵션이 들어왔을 경우 최우선 실행
+    if args.init_db:
+        logger.info("🛠 Initializing database schema from schema.sql...")
+        init_database_tables()
+        logger.info("✅ Database schema initialized successfully.")
+        return
+
+    # 2. 시작 시 누락된 테이블 안전 자동 점검 (Auto-Init)
+    try:
+        init_database_tables()
+    except Exception as e:
+        logger.warning(f"Database auto-init notice: {e}")
+
     print_system_banner()
 
-    # 0. 데이터 수집 모드
+    # 3. 데이터 수집 모드
     if args.collect:
         from collectors.run_collectors import run_all_collectors
         logger.info("📥 Running full data collection pipeline...")
         run_all_collectors()
-        return
-
-    # DB 테이블 무결성 확인 및 초기화
-    if args.init_db:
-        logger.info("🛠 Initializing database schema from schema.sql...")
-        init_database_tables()
         return
 
     # 1. 즉시 서브섹터 스캔 모드

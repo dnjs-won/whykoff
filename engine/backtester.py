@@ -402,13 +402,17 @@ def get_current_champion() -> Optional[Dict[str, Any]]:
     ORDER BY id DESC
     LIMIT 1;
     """
-    with get_db_cursor() as (cursor, _):
-        cursor.execute(query)
-        row = cursor.fetchone()
-        if not row:
-            return None
-        colnames = [desc[0] for desc in cursor.description]
-        return dict(zip(colnames, row))
+    try:
+        with get_db_cursor() as (cursor, _):
+            cursor.execute(query)
+            row = cursor.fetchone()
+            if not row:
+                return None
+            colnames = [desc[0] for desc in cursor.description]
+            return dict(zip(colnames, row))
+    except Exception as e:
+        logger.debug(f"Could not query strategy_benchmarks (table may not exist yet): {e}")
+        return None
 
 
 def set_champion(benchmark_id: int) -> None:
