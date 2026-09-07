@@ -28,12 +28,20 @@ logger = get_logger("services.scheduler")
 
 
 def is_us_market_day(target_date: Optional[date] = None) -> bool:
-    """미국 증시 개장일 여부 판정 (월~금 평일 기준)"""
-    check_date = target_date or date.today()
-    # 0=월요일, 4=금요일, 5=토요일, 6=일요일
-    if check_date.weekday() >= 5:
-        return False
-    return True
+    """
+    미국 증시 개장일 여부 판정:
+    - target_date가 명시된 경우: 해당 일자의 월~금 평일 여부 (0~4)
+    - KST 실시간 판정 시:
+      - 오전 (< 12시, 장마감 브리핑): 미국 전일 장(월~금) -> 한국 화~토(1~5)
+      - 오후/야간 (>= 12시, 프리마켓 스캔): 미국 당일 장(월~금) -> 한국 월~금(0~4)
+    """
+    if target_date is not None:
+        return target_date.weekday() < 5
+
+    now = datetime.now()
+    if now.hour < 12:
+        return now.weekday() in [1, 2, 3, 4, 5]
+    return now.weekday() in [0, 1, 2, 3, 4]
 
 
 def run_postmarket_pipeline(
@@ -148,8 +156,8 @@ def start_scheduler_daemon() -> None:
         now = datetime.now()
         today_str = now.strftime("%Y-%m-%d")
 
-        # 한국시간 오전 06:30 (미국 장마감 직후)
-        if now.hour == 6 and now.minute == 30 and is_us_market_day():
+        # 한국시간 오전 07:30 (미국 장마감 및 데이터 집계 완료 직후, 서머타임/표준시 공통 안전 시각)
+        if now.hour == 7 and now.minute == 30 and is_us_market_day():
             if last_run_date != today_str:
                 logger.info(f"⏰ Triggering scheduled Post-market pipeline for {today_str}...")
                 try:

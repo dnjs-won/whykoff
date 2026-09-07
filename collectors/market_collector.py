@@ -81,7 +81,7 @@ def collect_daily_candles(
             records: List[Tuple] = []
             for sym in chunk:
                 try:
-                    sub_df = df[sym] if len(chunk) > 1 else df
+                    sub_df = df[sym] if (isinstance(df.columns, pd.MultiIndex) and sym in df) else df
                     sub_df = sub_df.dropna(subset=["Close", "Volume"])
                     if sub_df.empty:
                         continue
@@ -164,7 +164,7 @@ def collect_1h_candles(
             records: List[Tuple] = []
             for sym in chunk:
                 try:
-                    sub_df = df[sym] if len(chunk) > 1 else df
+                    sub_df = df[sym] if (isinstance(df.columns, pd.MultiIndex) and sym in df) else df
                     sub_df = sub_df.dropna(subset=["Close", "Volume"])
                     if sub_df.empty:
                         continue
