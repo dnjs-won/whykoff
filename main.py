@@ -52,7 +52,15 @@ def main():
     parser = argparse.ArgumentParser(description="Whykoff Stock System CLI")
     parser.add_argument("--briefing", action="store_true", help="Run 1-shot postmarket briefing and send to Telegram")
     parser.add_argument("--scan", type=str, nargs="?", const="ALL", help="Run on-demand Wyckoff scan for subsector")
-    parser.add_argument("--collect", action="store_true", help="Run external data collectors (candles, macro, news)")
+    parser.add_argument(
+        "--collect",
+        type=str,
+        nargs="?",
+        const="all",
+        choices=["all", "1h", "daily", "macro", "news"],
+        help="Run external data collectors (all, 1h, daily, macro, news)",
+    )
+    parser.add_argument("--telegram", action="store_true", help="Send scan output directly to Telegram")
     parser.add_argument("--daemon", action="store_true", help="Start production background daemon (Scheduler + Bot)")
     parser.add_argument("--init-db", action="store_true", help="Initialize or migrate database schema from schema.sql")
     args = parser.parse_args()
@@ -75,19 +83,37 @@ def main():
     # 3. 데이터 수집 모드
     if args.collect:
         from collectors.run_collectors import run_all_collectors
-        logger.info("📥 Running full data collection pipeline...")
-        run_all_collectors()
+        from collectors.market_collector import collect_daily_candles, collect_1h_candles
+        from collectors.macro_collector import collect_macro_indicators, collect_sector_liquidity_shares
+        from collectors.news_collector import collect_news
+
+        logger.info(f"📥 Running data collection pipeline (mode={args.collect})...")
+        if args.collect == "1h":
+            collect_1h_candles()
+        elif args.collect == "daily":
+            collect_daily_candles()
+        elif args.collect == "macro":
+            collect_macro_indicators()
+            collect_sector_liquidity_shares()
+        elif args.collect == "news":
+            collect_news()
+        else:
+            run_all_collectors()
         return
 
-    # 1. 즉시 서브섹터 스캔 모드
+    # 4. 즉시 서브섹터 스캔 모드
     if args.scan:
         subsector = None if args.scan == "ALL" else args.scan
         logger.info(f"🔍 Running on-demand Wyckoff scan for: {subsector or 'ALL'}...")
         report = handle_scan_command(subsector)
         print("\n" + report + "\n")
+        if args.telegram:
+            logger.info("📢 Sending scan report to Telegram...")
+            sent = send_telegram_message(report)
+            logger.info(f"• Telegram delivery: {'Success ✅' if sent else 'Failed ❌'}")
         return
 
-    # 2. 장후마감 브리핑 1회 실행 모드
+    # 5. 장후마감 브리핑 1회 실행 모드
     if args.briefing:
         logger.info("📢 Executing Post-market pipeline and Telegram delivery...")
         briefing = run_postmarket_pipeline(send_telegram=True)

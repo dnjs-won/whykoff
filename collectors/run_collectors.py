@@ -3,7 +3,15 @@ Whykoff Collectors Orchestrator (collectors/run_collectors.py)
 Orchestrates market candles (daily/1h), macro indicators, sector liquidity shares, and news collection.
 Can be triggered manually or automatically scheduled before daily Wyckoff scans.
 """
+import sys
+import os
 from typing import Optional, List
+
+# 프로젝트 루트 경로 자동 추가 (독립 CLI 실행 지원)
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
 from core.logger import get_logger
 from collectors.market_collector import collect_daily_candles, collect_1h_candles
 from collectors.macro_collector import collect_macro_indicators, collect_sector_liquidity_shares
@@ -79,4 +87,29 @@ def run_all_collectors(
 
 
 if __name__ == "__main__":
-    run_all_collectors()
+    import argparse
+    parser = argparse.ArgumentParser(description="Whykoff Collectors Runner")
+    parser.add_argument(
+        "mode",
+        nargs="?",
+        default="all",
+        choices=["all", "1h", "daily", "macro", "news"],
+        help="수집 대상 선택 (all, 1h, daily, macro, news)",
+    )
+    args = parser.parse_args()
+
+    if args.mode == "1h":
+        logger.info("⏱ Running 1-Hour candle collection...")
+        collect_1h_candles()
+    elif args.mode == "daily":
+        logger.info("📅 Running Daily candle collection...")
+        collect_daily_candles()
+    elif args.mode == "macro":
+        logger.info("🌐 Running Macro & Sector Liquidity collection...")
+        collect_macro_indicators()
+        collect_sector_liquidity_shares()
+    elif args.mode == "news":
+        logger.info("📰 Running News Feed collection...")
+        collect_news()
+    else:
+        run_all_collectors()
