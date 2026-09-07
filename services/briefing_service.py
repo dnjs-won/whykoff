@@ -64,6 +64,7 @@ def get_subsector_briefing_section() -> str:
     ]
 
     try:
+        from collectors.macro_collector import SECTOR_ETF_MAP
         with get_db_cursor() as (cur, _):
             cur.execute("""
                 SELECT symbol, share_delta, change_pct
@@ -73,11 +74,14 @@ def get_subsector_briefing_section() -> str:
             """)
             rows = cur.fetchall()
             if rows:
-                for sym, delta, chg in rows[:4]:
+                top_inflows = [r for r in rows if float(r[1] or 0.0) > 0][:3]
+                top_outflows = [r for r in reversed(rows) if float(r[1] or 0.0) < 0][:2]
+                for sym, delta, chg in (top_inflows + top_outflows):
                     d_val = float(delta or 0.0)
+                    name = SECTOR_ETF_MAP.get(sym, sym)
                     icon = "▲" if d_val > 0 else "▼"
-                    tag = "🟢 유입" if d_val > 0 else "⚪ 중립"
-                    lines.append(f"  - <b>{sym}</b>: 점유율 변화 <code>{icon}{abs(d_val):.2f}%</code> ({tag})")
+                    tag = "🟢 자금유입" if d_val > 0 else "🔴 자금이탈"
+                    lines.append(f"  - <b>{sym}</b> ({name}): <code>{icon}{abs(d_val):.2f}%</code> ({tag})")
     except Exception as e:
         logger.debug(f"Error fetching sector liquidity: {e}")
 

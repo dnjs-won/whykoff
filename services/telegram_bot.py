@@ -92,27 +92,71 @@ def send_telegram_message(message: str, chat_id: Optional[str] = None) -> bool:
     return success
 
 
+SUBSECTOR_ALIASES = {
+    "SEMI": "SEMICONDUCTOR",
+    "SEMIS": "SEMICONDUCTOR",
+    "SOXX": "SOXX",
+    "SMH": "SOXX",
+    "OPTICAL": "OPTICAL",
+    "광통신": "OPTICAL",
+    "IYZ": "OPTICAL",
+    "CRYPTO": "CRYPTO",
+    "BITCOIN": "CRYPTO",
+    "BTC": "CRYPTO",
+    "채굴": "CRYPTO",
+    "WGMI": "CRYPTO",
+    "QUANTUM": "QUANTUM",
+    "양자": "QUANTUM",
+    "양자컴퓨터": "QUANTUM",
+    "QTUM": "QUANTUM",
+    "CYBER": "CYBERSECURITY",
+    "SECURITY": "CYBERSECURITY",
+    "보안": "CYBERSECURITY",
+    "CIBR": "CYBERSECURITY",
+    "AI": "AI_SOFTWARE",
+    "SOFTWARE": "AI_SOFTWARE",
+    "SAAS": "AI_SOFTWARE",
+    "IGV": "IGV",
+    "HARDWARE": "AI_HARDWARE",
+    "BOTZ": "AI_HARDWARE",
+    "BIO": "BIOTECH",
+    "BIOTECH": "BIOTECH",
+    "XBI": "BIOTECH",
+    "NUCLEAR": "NUCLEAR",
+    "원자력": "NUCLEAR",
+    "SMR": "NUCLEAR",
+    "URA": "NUCLEAR",
+    "EV": "EV",
+    "전기차": "EV",
+    "DEFENSE": "DEFENSE",
+    "방산": "DEFENSE",
+    "우주": "DEFENSE",
+    "FINTECH": "FINTECH",
+    "LITHIUM": "LITHIUM",
+}
+
+
 def handle_scan_command(subsector: Optional[str] = None) -> str:
     """
     /scan [서브섹터] 커맨드 처리:
-    지정된 서브섹터(또는 전체) 종목들을 스캔하여 5성 스윗스팟 및 4성 돌파 종목 리포트 반환.
+    지정된 서브섹터(반도체, 광통신, 암호화폐, 양자컴퓨터 등) 또는 전체 종목들을 스캔.
     """
     subsector_upper = subsector.strip().upper() if subsector else None
+    target_sub = SUBSECTOR_ALIASES.get(subsector_upper, subsector_upper) if subsector_upper else None
     
-    # 스캔 대상 종목 추출
+    # 스캔 대상 종목 추출 (서브섹터 및 섹터 ETF 매핑)
     query = """
         SELECT DISTINCT ticker 
         FROM tickers 
         WHERE (%s IS NULL OR sector_etf = %s OR subsector = %s)
           AND is_active = TRUE
-        LIMIT 30;
+        LIMIT 40;
     """
     with get_db_cursor() as (cur, _):
-        cur.execute(query, (subsector_upper, subsector_upper, subsector_upper))
+        cur.execute(query, (target_sub, target_sub, target_sub))
         tickers = [r[0] for r in cur.fetchall()]
 
     if not tickers:
-        # DB에 tickers 매핑이 없으면 ohlcv_daily의 대표 종목 스캔
         with get_db_cursor() as (cur, _):
             cur.execute("SELECT DISTINCT ticker FROM ohlcv_daily LIMIT 25;")
             tickers = [r[0] for r in cur.fetchall()]
@@ -220,18 +264,31 @@ def handle_telegram_updates(last_offset: int = 0) -> int:
 
             if text.startswith("/start") or text.startswith("/help"):
                 reply = (
-                    "🤖 <b>Whykoff 퀀트 주식 시스템 봇</b>\n\n"
-                    "사용 가능한 명령어:\n"
-                    "• <code>/scan [서브섹터]</code>: 특정 서브섹터(예: SOXX, IGV) 또는 전체 매집 스캔\n"
-                    "• <code>/portfolio</code>: 현재 추적 중인 활성 포지션 모니터링\n"
-                    "• <code>/help</code>: 도움말 안내\n"
+                    "🤖 <b>Whykoff 퀀트 트레이딩 봇 가이드</b>\n\n"
+                    "<b>1. 기본 명령어:</b>\n"
+                    "• <code>/scan</code>: 전체 시장 와이코프 매집 스캔\n"
+                    "• <code>/scan [서브섹터]</code>: 세부 테마 집중 스캔\n"
+                    "• <code>/portfolio</code>: 현재 보유 포지션 수익률/조기경보\n"
+                    "• <code>/briefing</code>: 오늘 장마감 종합 브리핑 즉시 발송\n"
+                    "• <code>/help</code>: 도움말 및 서브섹터 목록 안내\n\n"
+                    "<b>2. 추천 스캔 서브섹터 키워드:</b>\n"
+                    "• <b>반도체:</b> <code>/scan SEMI</code> (또는 SOXX)\n"
+                    "• <b>광통신:</b> <code>/scan OPTICAL</code> (AAOI, LITE, COHR 등)\n"
+                    "• <b>암호화폐:</b> <code>/scan CRYPTO</code> (MSTR, MARA, CLSK 등)\n"
+                    "• <b>양자컴:</b> <code>/scan QUANTUM</code> (IONQ, RGTI, QBTS 등)\n"
+                    "• <b>사이버보안:</b> <code>/scan CYBER</code> (CRWD, PANW, FTNT 등)\n"
+                    "• <b>AI 소프트웨어:</b> <code>/scan AI</code> (PLTR, CRM, SNOW 등)\n"
+                    "• <b>원자력/SMR:</b> <code>/scan NUCLEAR</code> (OKLO, SMR, URA 등)\n"
+                    "• <b>방산/우주:</b> <code>/scan DEFENSE</code> (LMT, RTX, RKLB 등)\n"
+                    "• <b>바이오:</b> <code>/scan BIO</code> (ARGX, BIIB, XBI 등)\n"
+                    "• <b>전기차:</b> <code>/scan EV</code> (TSLA, RIVN 등)\n"
                 )
                 send_telegram_message(reply, chat_id=chat_id)
 
             elif text.startswith("/scan"):
                 parts = text.split()
                 subsector_arg = parts[1] if len(parts) > 1 else None
-                send_telegram_message(f"⏳ <b>{subsector_arg or '전체'}</b> 매집 스캔을 분석 중입니다...", chat_id=chat_id)
+                send_telegram_message(f"⏳ <b>{subsector_arg or '전체 시장'}</b> 와이코프 매집 스캔을 분석 중입니다...", chat_id=chat_id)
                 reply = handle_scan_command(subsector_arg)
                 send_telegram_message(reply, chat_id=chat_id)
 
@@ -239,15 +296,51 @@ def handle_telegram_updates(last_offset: int = 0) -> int:
                 reply = handle_portfolio_command()
                 send_telegram_message(reply, chat_id=chat_id)
 
+            elif text.startswith("/briefing"):
+                send_telegram_message("📢 최신 장마감 종합 브리핑을 조립 중입니다...", chat_id=chat_id)
+                try:
+                    from services.briefing_service import generate_postmarket_briefing
+                    briefing_html = generate_postmarket_briefing()
+                    send_telegram_message(briefing_html, chat_id=chat_id)
+                except Exception as b_err:
+                    send_telegram_message(f"⚠️ 브리핑 생성 오류: {b_err}", chat_id=chat_id)
+
     except Exception as e:
         logger.error(f"Error in Telegram update loop: {e}")
 
     return last_offset
 
 
+def set_bot_commands() -> bool:
+    """텔레그램 봇 메뉴에 표시될 커맨드 리스트 등록 (setMyCommands API)"""
+    url = f"{TELEGRAM_API_BASE}/setMyCommands"
+    commands = [
+        {"command": "scan", "description": "와이코프 매집 스캔 (/scan [서브섹터] 또는 전체)"},
+        {"command": "portfolio", "description": "현재 보유 포지션 수익률 및 조기경보 현황"},
+        {"command": "briefing", "description": "장마감 종합 브리핑(매크로+스윗스팟) 즉시 조회"},
+        {"command": "help", "description": "봇 사용 가이드 및 지원 서브섹터 목록"},
+    ]
+    try:
+        resp = requests.post(url, json={"commands": commands}, timeout=10)
+        if resp.status_code == 200 and resp.json().get("ok", False):
+            logger.info("✅ Telegram bot commands menu registered successfully.")
+            return True
+        else:
+            logger.error(f"❌ Failed to set bot commands: {resp.status_code} {resp.text}")
+            return False
+    except Exception as e:
+        logger.error(f"Error setting bot commands: {e}")
+        return False
+
+
 def start_bot_polling(stop_event: Optional[threading.Event] = None) -> None:
     """백그라운드 스레드에서 텔레그램 봇 폴링 루프 실행"""
     logger.info("🚀 Starting Telegram Bot polling listener...")
+    try:
+        set_bot_commands()
+    except Exception as cmd_err:
+        logger.warning(f"Could not auto-register bot commands: {cmd_err}")
+
     offset = 0
     while stop_event is None or not stop_event.is_set():
         try:
