@@ -23,30 +23,46 @@ logger = get_logger("services.briefing_service")
 
 
 def get_macro_briefing_section() -> str:
-    """거시 매크로 환경 브리핑 섹션 조립"""
-    vix_val = "16.4"
-    vix_state = "안정 (Risk-On)"
-    market_trend = "상승 추세 유지"
+    """거시 매크로 환경 브리핑 섹션 조립 (실시간 SPY, QQQ, VIX 동적 반영)"""
+    vix_val = "15.3"
+    vix_state = "안정 (Risk-On 🟢)"
+    spy_text = ""
+    qqq_text = ""
 
     try:
         with get_db_cursor() as (cur, _):
             cur.execute("""
                 SELECT ticker, value, change_pct 
                 FROM macro_indicators 
-                WHERE metric_code = 'VIX' OR ticker = '^VIX' 
-                ORDER BY updated_at DESC LIMIT 1;
+                WHERE metric_code IN ('VIX', 'SPY', 'QQQ') OR ticker IN ('^VIX', 'SPY', 'QQQ')
+                ORDER BY updated_at DESC;
             """)
-            row = cur.fetchone()
-            if row and row[1] is not None:
-                v = float(row[1])
-                vix_val = f"{v:.1f}"
-                vix_state = "안정 (Risk-On 🟢)" if v < 20.0 else ("경계 (Caution ⚠️)" if v < 25.0 else "위험 (Risk-Off 🔴)")
+            rows = cur.fetchall()
+            seen = set()
+            for t, v, chg in rows:
+                if t in seen:
+                    continue
+                seen.add(t)
+                if t in ('^VIX', 'VIX') and v is not None:
+                    val = float(v)
+                    vix_val = f"{val:.1f}"
+                    vix_state = "안정 (Risk-On 🟢)" if val < 20.0 else ("경계 (Caution ⚠️)" if val < 25.0 else "위험 (Risk-Off 🔴)")
+                elif t == 'SPY' and v is not None:
+                    chg_val = float(chg or 0.0)
+                    sign = "+" if chg_val > 0 else ""
+                    spy_text = f"SPY <code>${float(v):.2f}</code> ({sign}{chg_val:.2f}%)"
+                elif t == 'QQQ' and v is not None:
+                    chg_val = float(chg or 0.0)
+                    sign = "+" if chg_val > 0 else ""
+                    qqq_text = f"QQQ <code>${float(v):.2f}</code> ({sign}{chg_val:.2f}%)"
     except Exception as e:
         logger.debug(f"Error fetching macro indicators: {e}")
 
+    market_idx_str = f"• <b>주요 지수:</b> {spy_text} | {qqq_text}\n" if (spy_text and qqq_text) else ""
+
     return (
         f"🌐 <b>[거시 매크로 & 서브섹터 환경]</b>\n"
-        f"• <b>시장 추세:</b> S&P 500 / 나스닥 단기 이평선 상회 견조\n"
+        f"{market_idx_str}"
         f"• <b>변동성 지수 (VIX):</b> <code>{vix_val}</code> ({vix_state})\n"
     )
 

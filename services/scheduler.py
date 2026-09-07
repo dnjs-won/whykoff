@@ -119,12 +119,14 @@ def run_postmarket_pipeline(
         for r in scan_results
         if r.is_sweet_spot or r.stars_rating >= 4
     ]
+    # 5성 스윗스팟 및 고득점 종목 최우선 정렬
+    sweet_spots.sort(key=lambda x: (x["stars_rating"], x["score"]), reverse=True)
 
-    # 5. 브리핑 메시지 생성
-    logger.info("▶ [4단계] 장후마감 종합 브리핑 조립...")
+    # 5. 브리핑 메시지 생성 (최상위 타점 6개 하이라이트)
+    logger.info(f"▶ [4단계] 장후마감 종합 브리핑 조립 (포착된 4~5성 종목 {len(sweet_spots)}건)...")
     briefing_html = generate_postmarket_briefing(
         scan_date=t_date,
-        highlight_tickers=sweet_spots[:4],
+        highlight_tickers=sweet_spots[:6],
     )
 
     # 6. 텔레그램 발송
