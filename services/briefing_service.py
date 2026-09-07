@@ -94,10 +94,15 @@ def get_subsector_briefing_section() -> str:
                 top_outflows = [r for r in reversed(rows) if float(r[1] or 0.0) < 0][:2]
                 for sym, delta, chg in (top_inflows + top_outflows):
                     d_val = float(delta or 0.0)
+                    c_val = float(chg or 0.0)
+                    c_sign = "+" if c_val > 0 else ""
                     name = SECTOR_ETF_MAP.get(sym, sym)
                     icon = "▲" if d_val > 0 else "▼"
                     tag = "🟢 자금유입" if d_val > 0 else "🔴 자금이탈"
-                    lines.append(f"  - <b>{sym}</b> ({name}): <code>{icon}{abs(d_val):.2f}%</code> ({tag})")
+                    lines.append(
+                        f"  - <b>{sym}</b> ({name}): 20일평균 대비 <code>{icon}{abs(d_val):.2f}%p</code> "
+                        f"(주가 <code>{c_sign}{c_val:.1f}%</code> | {tag})"
+                    )
     except Exception as e:
         logger.debug(f"Error fetching sector liquidity: {e}")
 
