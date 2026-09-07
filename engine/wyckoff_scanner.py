@@ -41,7 +41,7 @@ class WyckoffParams:
     rsi_max: float = 62.0               # 조건 5: RSI 정상 턴 상한
     tp1_pct: float = 0.20               # 1차 목표가 비율 (+20%)
     tp2_pct: float = 0.50               # 2차 목표가 비율 (+50%)
-    sl_buffer_pct: float = 0.02         # 박스 저점 대비 SL 버퍼 (2%)
+    sl_buffer_pct: float = 0.025        # 박스 저점 대비 SL 버퍼 (2.5% - 노이즈 털림 방지)
     sweet_spot_min_score: float = 68.0  # 5성 스윗스팟 최소 점수
     sweet_spot_max_score: float = 78.0  # 5성 스윗스팟 최대 점수
     sweet_spot_max_box: float = 18.0    # 5성 스윗스팟 박스권 진폭 상한
