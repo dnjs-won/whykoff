@@ -2,6 +2,12 @@
 
 이 문서는 **Whykoff (주식 와이코프 매집 분석 및 자동 브리핑 시스템)** 프로젝트를 개발하고 유지보수할 때 AI 어시스턴트와 개발자가 반드시 따라야 하는 절대 원칙입니다.
 
+> **[필독 필수 문서]**  
+> 모든 AI 어시스턴트는 작업을 시작하기 전 반드시 다음 문서를 먼저 확인해야 합니다:  
+> 1. [`PROJECT_STATUS.md`](file:///C:/project_k/whykoff/PROJECT_STATUS.md): 현재 운영 상태, 챔피언 전략(`wyckoff_v2.0_full_swing`) 성과 통계 및 인수인계 사항
+> 2. [`CORE_LOGIC_SPECS.md`](file:///C:/project_k/whykoff/CORE_LOGIC_SPECS.md): 와이코프 6단계 매집 공식 및 5성 LPS 스윗스팟 타점 규격
+> 3. [`ARCHITECTURE.md`](file:///C:/project_k/whykoff/ARCHITECTURE.md): 레이어드 아키텍처 및 DB 파이프라인
+
 ---
 
 ## 1. 프로젝트 정체성 및 핵심 철학
