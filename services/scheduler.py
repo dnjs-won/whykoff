@@ -75,10 +75,15 @@ def run_postmarket_pipeline(
     pos_update_res = update_open_positions_daily(as_of_date=t_date)
     logger.info(f"• 포지션 갱신 완료: 활성 유지 {len(pos_update_res['updated_open'])}건, 금일 청산 {len(pos_update_res['closed'])}건")
 
-    # 2. 유니버스 와이코프 매집 스캔 실행
-    logger.info("▶ [2단계] 일일 와이코프 매집 스캐너 실행 중...")
+    # 2. 전체 유니버스 와이코프 매집 스캔 실행 (전체 섹터 활성 종목)
+    logger.info("▶ [2단계] 일일 와이코프 매집 스캐너 실행 중 (전체 섹터 대상)...")
     with get_db_cursor() as (cur, _):
-        cur.execute("SELECT DISTINCT ticker FROM ohlcv_daily LIMIT 40;")
+        cur.execute("""
+            SELECT DISTINCT COALESCE(query_ticker, ticker) 
+            FROM tickers 
+            WHERE is_active = TRUE 
+            ORDER BY 1;
+        """)
         tickers = [r[0] for r in cur.fetchall()]
 
     scan_results = []

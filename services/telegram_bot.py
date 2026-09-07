@@ -150,7 +150,7 @@ def handle_scan_command(subsector: Optional[str] = None) -> str:
         FROM tickers 
         WHERE (%s IS NULL OR sector_etf = %s OR subsector = %s)
           AND is_active = TRUE
-        LIMIT 40;
+        ORDER BY ticker;
     """
     with get_db_cursor() as (cur, _):
         cur.execute(query, (target_sub, target_sub, target_sub))
