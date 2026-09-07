@@ -311,17 +311,24 @@ def handle_telegram_updates(last_offset: int = 0) -> int:
     return last_offset
 
 
-def set_bot_commands() -> bool:
+TELEGRAM_BOT_COMMANDS = [
+    {"command": "scan", "description": "와이코프 매집 스캔 (/scan [서브섹터] 또는 전체)"},
+    {"command": "portfolio", "description": "현재 보유 포지션 수익률 및 조기경보 현황"},
+    {"command": "briefing", "description": "장마감 종합 브리핑(매크로+스윗스팟) 즉시 조회"},
+    {"command": "help", "description": "봇 사용 가이드 및 지원 서브섹터 목록"},
+]
+
+
+def set_bot_commands(bot_token: Optional[str] = None) -> bool:
     """텔레그램 봇 메뉴에 표시될 커맨드 리스트 등록 (setMyCommands API)"""
-    url = f"{TELEGRAM_API_BASE}/setMyCommands"
-    commands = [
-        {"command": "scan", "description": "와이코프 매집 스캔 (/scan [서브섹터] 또는 전체)"},
-        {"command": "portfolio", "description": "현재 보유 포지션 수익률 및 조기경보 현황"},
-        {"command": "briefing", "description": "장마감 종합 브리핑(매크로+스윗스팟) 즉시 조회"},
-        {"command": "help", "description": "봇 사용 가이드 및 지원 서브섹터 목록"},
-    ]
+    token = bot_token or settings.telegram.bot_token
+    if not token:
+        logger.warning("No telegram bot token provided for set_bot_commands.")
+        return False
+
+    url = f"https://api.telegram.org/bot{token}/setMyCommands"
     try:
-        resp = requests.post(url, json={"commands": commands}, timeout=10)
+        resp = requests.post(url, json={"commands": TELEGRAM_BOT_COMMANDS}, timeout=10)
         if resp.status_code == 200 and resp.json().get("ok", False):
             logger.info("✅ Telegram bot commands menu registered successfully.")
             return True
@@ -331,6 +338,26 @@ def set_bot_commands() -> bool:
     except Exception as e:
         logger.error(f"Error setting bot commands: {e}")
         return False
+
+
+def get_bot_commands(bot_token: Optional[str] = None) -> List[Dict[str, str]]:
+    """현재 텔레그램 봇에 등록되어 있는 커맨드 리스트 조회 (getMyCommands API)"""
+    token = bot_token or settings.telegram.bot_token
+    if not token:
+        logger.warning("No telegram bot token provided for get_bot_commands.")
+        return []
+
+    url = f"https://api.telegram.org/bot{token}/getMyCommands"
+    try:
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 200 and resp.json().get("ok", False):
+            return resp.json().get("result", [])
+        else:
+            logger.error(f"❌ Failed to get bot commands: {resp.status_code} {resp.text}")
+            return []
+    except Exception as e:
+        logger.error(f"Error getting bot commands: {e}")
+        return []
 
 
 def start_bot_polling(stop_event: Optional[threading.Event] = None) -> None:
