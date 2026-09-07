@@ -1,0 +1,10 @@
+# Whykoff Production Dependencies
+psycopg2-binary>=2.9.12
+yfinance>=1.7.0
+curl_cffi>=0.16.3
+google-genai>=2.10.0
+feedparser>=6.0.14
+pandas>=2.2.0
+numpy>=2.0.0
+requests>=2.31.0
+python-dotenv>=1.0.0

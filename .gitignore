@@ -1,0 +1,19 @@
+# Environment secrets
+.env
+
+# Python cache & artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE & OS
+.vscode/
+.idea/
+*.log
