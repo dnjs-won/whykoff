@@ -29,6 +29,9 @@ class WyckoffSetupResult:
     tp2: float
     rr_ratio: float
     reasons: List[str] = field(default_factory=list)
+    cloud_top: Optional[float] = None
+    cloud_bottom: Optional[float] = None
+    overhead_space_pct: Optional[float] = None
 
 @dataclass
 class ConfluenceSignalResult:
@@ -84,6 +87,8 @@ class ActiveTradeRecord:
     holding_days: int = 0
     close_reason: Optional[str] = None
     reconfirmed_count: int = 1
+    tp1_hit: bool = False
+    max_holding_days: int = 20
 
 @dataclass
 class PositionMonitoringItem:
@@ -98,9 +103,12 @@ class PositionMonitoringItem:
     daily_poc: float
     stop_loss: float
     tp1: float
-    is_poc_broken: bool
-    warning_flag: bool
+    tp2: float = 0.0
+    is_poc_broken: bool = False
+    warning_flag: bool = False
     warning_comment: Optional[str] = None
+    tp1_hit: bool = False
+    max_holding_days: int = 20
 
 @dataclass
 class StrategyPerformanceSummary:

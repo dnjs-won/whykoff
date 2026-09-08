@@ -206,12 +206,65 @@ def calculate_volume_profile_poc(
     return round(float(poc_price), 4)
 
 
+def calculate_ichimoku(
+    df: pd.DataFrame,
+    tenkan_period: int = 9,
+    kijun_period: int = 26,
+    senkou_b_period: int = 52,
+    shift_period: int = 26,
+) -> Tuple[pd.Series, pd.Series, pd.Series, pd.Series, pd.Series, pd.Series]:
+    """
+    일목균형표 (Ichimoku Kinko Hyo) 지표 계산 (일봉 기준)
+    
+    1. 전환선(Tenkan-sen, 9): 과거 9봉간 (최고가 + 최저가) / 2
+    2. 기준선(Kijun-sen, 26): 과거 26봉간 (최고가 + 최저가) / 2
+    3. 선행스팬 1(Senkou Span A): (전환선 + 기준선) / 2 의 26봉 선행(shift +26) 값
+    4. 선행스팬 2(Senkou Span B): 52봉간 (최고가 + 최저가) / 2 의 26봉 선행(shift +26) 값
+    5. 현재 캔들 위치의 구름대:
+       - 구름대 상단: max(선행스팬 1, 선행스팬 2)
+       - 구름대 하단: min(선행스팬 1, 선행스팬 2)
+       
+    Args:
+        df: high, low 컬럼을 포함하는 DataFrame
+        
+    Returns:
+        Tuple: (tenkan_sen, kijun_sen, senkou_span_a, senkou_span_b, cloud_top, cloud_bottom)
+    """
+    required_cols = {"high", "low"}
+    if not required_cols.issubset(df.columns) or len(df) < senkou_b_period:
+        nan_s = pd.Series(np.nan, index=df.index)
+        return nan_s, nan_s, nan_s, nan_s, nan_s, nan_s
+
+    high = df["high"]
+    low = df["low"]
+
+    # 1. 전환선 (9)
+    tenkan_sen = (high.rolling(window=tenkan_period).max() + low.rolling(window=tenkan_period).min()) / 2.0
+
+    # 2. 기준선 (26)
+    kijun_sen = (high.rolling(window=kijun_period).max() + low.rolling(window=kijun_period).min()) / 2.0
+
+    # 3. 선행스팬 1 원본 및 26봉 선행값
+    span_a_raw = (tenkan_sen + kijun_sen) / 2.0
+    senkou_span_a = span_a_raw.shift(shift_period)
+
+    # 4. 선행스팬 2 원본 및 26봉 선행값
+    span_b_raw = (high.rolling(window=senkou_b_period).max() + low.rolling(window=senkou_b_period).min()) / 2.0
+    senkou_span_b = span_b_raw.shift(shift_period)
+
+    # 5. 캔들 현재 위치에서의 구름대 상단 및 하단
+    cloud_top = np.maximum(senkou_span_a, senkou_span_b)
+    cloud_bottom = np.minimum(senkou_span_a, senkou_span_b)
+
+    return tenkan_sen, kijun_sen, senkou_span_a, senkou_span_b, cloud_top, cloud_bottom
+
+
 def add_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """
     입력 DataFrame의 복사본을 생성하고 와이코프 및 컨플루언스 분석에 필요한 모든 기술적 지표 컬럼을 순수 함수로 추가.
     
     추가되는 컬럼:
-    - ma5, ma20, ma50, ma120, ma200: 단순 이동평균선
+    - ma5, ma20, ma50, ma60, ma120, ma200: 단순 이동평균선
     - ma20_slope_10d: 10일 전 대비 20일선 기울기 (%)
     - rsi: RSI (14)
     - macd, macd_signal, macd_hist: MACD (12, 26, 9)
@@ -219,6 +272,7 @@ def add_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
     - mfi_15d_ago: 15일 전 MFI (수급 턴 판별용)
     - obv, obv_ma10: OBV 및 10일 이동평균
     - atr: Average True Range (14)
+    - tenkan_sen, kijun_sen, senkou_span_a, senkou_span_b, cloud_top, cloud_bottom: 일목균형표 지표군
     
     Args:
         df: OHLCV DataFrame
@@ -231,12 +285,11 @@ def add_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
     res = df.copy()
 
-    # 1. 이동평균선 (SMA)
-    for window in [5, 20, 50, 120, 200]:
+    # 1. 이동평균선 (SMA) - ma60 포함
+    for window in [5, 20, 50, 60, 120, 200]:
         res[f"ma{window}"] = res["close"].rolling(window=window).mean()
 
     # 2. 20일선 10일 대비 기울기 (%)
-    # Slope = (MA20_today - MA20_10d_ago) / MA20_10d_ago * 100
     ma20_10d_ago = res["ma20"].shift(10)
     res["ma20_slope_10d"] = ((res["ma20"] - ma20_10d_ago) / ma20_10d_ago.replace(0.0, np.nan)) * 100.0
 
@@ -255,5 +308,15 @@ def add_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
     # 7. ATR (14)
     res["atr"] = calculate_atr(res, period=14)
+
+    # 8. 일목균형표 (Ichimoku Kinko Hyo) 지표군
+    (
+        res["tenkan_sen"],
+        res["kijun_sen"],
+        res["senkou_span_a"],
+        res["senkou_span_b"],
+        res["cloud_top"],
+        res["cloud_bottom"],
+    ) = calculate_ichimoku(res)
 
     return res

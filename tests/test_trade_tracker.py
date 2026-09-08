@@ -190,48 +190,92 @@ class TestTradeTracker(unittest.TestCase):
         logger.info("• 중복 방지 검증 통과: NVDA 신규 포지션 중복 미발생, reconfirmed_count=2 정상 반영!")
 
         # ====================================================================
-        # [DAY 3] 2026-09-03: 일일 주가 평가 및 청산 조건 발동
-        # - TEST_NVDA: High $145.00 도달 (TP1 $144.00 돌파) -> TP1 익절 CLOSED 확정!
+        # [DAY 3] 2026-09-03: 일일 주가 평가 및 분할익절/기한연장 발동
+        # - TEST_NVDA: High $145.00 도달 (TP1 $144.00 돌파) -> 50% 분할익절, SL 본전($120.60) 상향, 기한 40일 연장, 알림 생성!
         # - TEST_PLTR: Low $27.50 도달 (SL $28.00 하회) -> SL 손절 CLOSED 확정!
         # - TEST_AAPL: High $225.00, Low $218.00, Close $224.00 -> 계속 OPEN 유지!
         # ====================================================================
-        logger.info("\n📅 [DAY 3] 2026-09-03 일일 장마감 정산 및 상태 머신 전이...")
+        logger.info("\n📅 [DAY 3] 2026-09-03 일일 장마감 정산 및 분할익절 상태 전이...")
         day3_price_feed = {
-            "TEST_NVDA": {"close": 144.5, "high": 145.0, "low": 122.0},  # TP1 144.0 도달!
-            "TEST_PLTR": {"close": 27.8, "high": 29.5, "low": 27.5},    # SL 28.0 도달!
+            "TEST_NVDA": {"close": 144.5, "high": 145.0, "low": 122.0},  # TP1 144.0 도달 (분할익절!)
+            "TEST_PLTR": {"close": 27.8, "high": 29.5, "low": 27.5},    # SL 28.0 도달 (손절)
             "TEST_AAPL": {"close": 224.0, "high": 225.0, "low": 218.0},  # 정상 유지 (+1.82%)
         }
 
-        update_res = update_open_positions_daily(
+        update_res3 = update_open_positions_daily(
             as_of_date="2026-09-03",
             price_feed=day3_price_feed,
+            enable_partial_tp=True,
         )
 
-        closed_list = [c for c in update_res["closed"] if c["ticker"] in self.test_tickers]
-        open_list = [o for o in update_res["updated_open"] if o["ticker"] in self.test_tickers]
+        closed_list3 = [c for c in update_res3["closed"] if c["ticker"] in self.test_tickers]
+        open_list3 = [o for o in update_res3["updated_open"] if o["ticker"] in self.test_tickers]
+        alerts3 = [a for a in update_res3.get("partial_tp_alerts", []) if a["ticker"] in self.test_tickers]
 
-        self.assertEqual(len(closed_list), 2, "NVDA(TP1)와 PLTR(SL) 2종목이 종료되어야 함")
-        self.assertEqual(len(open_list), 1, "AAPL 1종목만 OPEN으로 유지되어야 함")
-
-        # NVDA 익절 검증
-        nvda_closed = next(c for c in closed_list if c["ticker"] == "TEST_NVDA")
-        self.assertEqual(nvda_closed["close_reason"], "TP1_TARGET")
-        self.assertEqual(nvda_closed["exit_price"], 144.0)
-        self.assertAlmostEqual(nvda_closed["realized_pnl_pct"], 20.0, places=1)
-        logger.info(f"• NVDA 익절 성공: {nvda_closed['close_reason']} | 실현수익률: {nvda_closed['realized_pnl_pct']:+}%")
+        self.assertEqual(len(closed_list3), 1, "PLTR 1종목만 손절 종료되어야 함")
+        self.assertEqual(len(open_list3), 2, "AAPL과 분할익절된 NVDA(Free-Ride) 2종목이 OPEN으로 유지되어야 함")
+        self.assertEqual(len(alerts3), 1, "NVDA 1차 목표가 달성에 따른 분할익절 & 40일 연장 알림이 1건 발생해야 함")
 
         # PLTR 손절 검증
-        pltr_closed = next(c for c in closed_list if c["ticker"] == "TEST_PLTR")
+        pltr_closed = closed_list3[0]
+        self.assertEqual(pltr_closed["ticker"], "TEST_PLTR")
         self.assertEqual(pltr_closed["close_reason"], "STOP_LOSS")
         self.assertEqual(pltr_closed["exit_price"], 28.0)
         self.assertAlmostEqual(pltr_closed["realized_pnl_pct"], -6.67, places=1)
         logger.info(f"• PLTR 손절 처리: {pltr_closed['close_reason']} | 실현수익률: {pltr_closed['realized_pnl_pct']:+}%")
 
+        # NVDA 분할익절 및 Free-Ride 상태 검증
+        nvda_open = next(o for o in open_list3 if o["ticker"] == "TEST_NVDA")
+        self.assertTrue(nvda_open["tp1_hit"], "NVDA는 tp1_hit = True 로 전환되어야 함")
+        self.assertEqual(nvda_open["max_holding_days"], 40, "NVDA의 보유 기한은 40일로 연장되어야 함")
+        self.assertGreaterEqual(nvda_open["stop_loss"], 120.60, "NVDA 손절선은 본전가($120.60 이상)로 상향되어야 함")
+        logger.info(
+            f"• NVDA 1차 분할익절 성공: 50% 익절 완료 | 본전손절 상향: ${nvda_open['stop_loss']:.2f} | "
+            f"보유기한 연장: {nvda_open['max_holding_days']}일 (Free-Ride 모드 🟢)"
+        )
+
+        # 알림 메시지 포맷 검증
+        nvda_alert = alerts3[0]
+        self.assertIn("분할익절 & 기한연장 알림", nvda_alert["message"])
+        self.assertIn("Free-Ride 모드", nvda_alert["message"])
+        self.assertIn("40영업일", nvda_alert["message"])
+        logger.info("• 분할익절 & 기한연장 알림 메시지 정상 생성 확인 완료!")
+
         # AAPL OPEN 유지 검증
-        aapl_open = next(o for o in open_list if o["ticker"] == "TEST_AAPL")
+        aapl_open = next(o for o in open_list3 if o["ticker"] == "TEST_AAPL")
         self.assertEqual(aapl_open["holding_days"], 1)
         self.assertGreater(aapl_open["unrealized_pnl_pct"], 0.0)
         logger.info(f"• AAPL 포지션 유지: OPEN | 보유일: {aapl_open['holding_days']}일 | 미실현: {aapl_open['unrealized_pnl_pct']:+}%")
+
+        # ====================================================================
+        # [DAY 4] 2026-09-04: Free-Ride 포지션의 TP2 최종 돌파
+        # - TEST_NVDA: High $181.00 도달 (TP2 $180.00 돌파!) -> 최종 50% 익절 청산 완료!
+        # - 총 실현수익률: 50% * (+20.0%) + 50% * (+50.0%) = +35.0%
+        # ====================================================================
+        logger.info("\n📅 [DAY 4] 2026-09-04 NVDA Free-Ride 2차 목표가(TP2) 도달 및 최종 청산...")
+        day4_price_feed = {
+            "TEST_NVDA": {"close": 180.5, "high": 181.0, "low": 140.0},  # TP2 180.0 도달!
+            "TEST_AAPL": {"close": 226.0, "high": 227.0, "low": 220.0},  # 정상 유지
+        }
+
+        update_res4 = update_open_positions_daily(
+            as_of_date="2026-09-04",
+            price_feed=day4_price_feed,
+            enable_partial_tp=True,
+        )
+
+        closed_list4 = [c for c in update_res4["closed"] if c["ticker"] in self.test_tickers]
+        self.assertEqual(len(closed_list4), 1, "NVDA 1종목이 TP2로 최종 종료되어야 함")
+
+        nvda_final = closed_list4[0]
+        self.assertEqual(nvda_final["ticker"], "TEST_NVDA")
+        self.assertEqual(nvda_final["close_reason"], "TP2_TARGET")
+        self.assertEqual(nvda_final["exit_price"], 180.0)
+        self.assertAlmostEqual(nvda_final["realized_pnl_pct"], 35.0, places=1)
+        logger.info(
+            f"• NVDA 2차 목표가 달성 최종 청산: {nvda_final['close_reason']} | "
+            f"종합 실현수익률: {nvda_final['realized_pnl_pct']:+}% (TP1 20% + TP2 50% 분할 정산)"
+        )
 
         # ====================================================================
         # [성과 대시보드 리포트 검증] (CORE_LOGIC_SPECS.md 7.2)
@@ -245,8 +289,8 @@ class TestTradeTracker(unittest.TestCase):
         logger.info(f"• 현재 OPEN 포지션: {summary.current_open_trades}건")
 
         self.assertGreaterEqual(summary.total_closed_trades, 2)
-        self.assertGreater(summary.profit_factor, 2.0, "NVDA +20%와 PLTR -6.67%로 손익비는 2.0 이상이어야 함")
-        logger.info("\n✅ 포지션 트래커 상태 머신 및 중복 방지 전체 테스트 완벽 통과!")
+        self.assertGreater(summary.profit_factor, 2.0, "NVDA +35%와 PLTR -6.67%로 손익비는 2.0 이상이어야 함")
+        logger.info("\n✅ 포지션 트래커 상태 머신 및 분할익절/기한연장 전체 테스트 완벽 통과!")
 
 
 if __name__ == "__main__":

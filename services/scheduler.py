@@ -81,7 +81,18 @@ def run_postmarket_pipeline(
     # 1. 활성 포지션 주가 평가 및 상태 머신 갱신
     logger.info(f"▶ [1단계] 활성 OPEN 포지션 당일 주가 평가 및 청산 검사 ({date_str})...")
     pos_update_res = update_open_positions_daily(as_of_date=t_date)
-    logger.info(f"• 포지션 갱신 완료: 활성 유지 {len(pos_update_res['updated_open'])}건, 금일 청산 {len(pos_update_res['closed'])}건")
+    partial_tp_alerts = pos_update_res.get("partial_tp_alerts", [])
+    logger.info(
+        f"• 포지션 갱신 완료: 활성 유지 {len(pos_update_res['updated_open'])}건, "
+        f"금일 청산 {len(pos_update_res['closed'])}건, "
+        f"분할익절 & 기한연장 알림 {len(partial_tp_alerts)}건"
+    )
+
+    # 1-1. 분할익절 & 기한연장 긴급 알림 실시간 발송
+    if send_telegram and partial_tp_alerts:
+        logger.info(f"▶ [알림 발송] {len(partial_tp_alerts)}건의 분할익절 & Free-Ride 기한연장 텔레그램 발송 중...")
+        for alert in partial_tp_alerts:
+            send_telegram_message(alert["message"])
 
     # 2. 전체 유니버스 와이코프 매집 스캔 실행 (전체 섹터 활성 종목)
     logger.info("▶ [2단계] 일일 와이코프 매집 스캐너 실행 중 (전체 섹터 대상)...")

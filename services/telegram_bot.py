@@ -221,16 +221,27 @@ def handle_portfolio_command() -> str:
         curr_p = float(p["current_price"] or entry_p)
         sl_p = float(p["stop_loss"])
         tp1_p = float(p["tp1"])
+        tp2_p = float(p.get("tp2") or (entry_p * 1.5))
         pnl = ((curr_p - entry_p) / entry_p) * 100.0
         sign = "+" if pnl >= 0 else ""
         d_day = p.get("holding_days", 0)
+        tp1_hit = bool(p.get("tp1_hit", False))
+        max_days = int(p.get("max_holding_days", 20))
 
-        warning_tag = "⚠️ 주의" if curr_p <= sl_p * 1.02 else "🟢 양호"
+        if tp1_hit:
+            status_tag = "🟢 <b>Free-Ride 모드 (50% 익절완료)</b>"
+            target_text = f"본전손절: <code>${sl_p:.2f}</code> | 2차목표: <code>${tp2_p:.2f}</code>"
+        elif curr_p <= sl_p * 1.02:
+            status_tag = "⚠️ 주의"
+            target_text = f"손절: <code>${sl_p:.2f}</code> | 1차목표: <code>${tp1_p:.2f}</code>"
+        else:
+            status_tag = "🟢 양호"
+            target_text = f"손절: <code>${sl_p:.2f}</code> | 1차목표: <code>${tp1_p:.2f}</code>"
 
         lines.append(
-            f"• <b>{ticker}</b> (진입 D+{d_day} | {warning_tag})\n"
+            f"• <b>{ticker}</b> (진입 D+{d_day}/{max_days} | {status_tag})\n"
             f"  - 진입: <code>${entry_p:.2f}</code> ➔ 현재: <code>${curr_p:.2f}</code> (<b>{sign}{pnl:.1f}%</b>)\n"
-            f"  - 손절: <code>${sl_p:.2f}</code> | 1차목표: <code>${tp1_p:.2f}</code>\n"
+            f"  - {target_text}\n"
         )
 
     return "\n".join(lines)

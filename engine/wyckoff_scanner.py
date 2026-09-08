@@ -46,6 +46,10 @@ class WyckoffParams:
     sweet_spot_max_score: float = 78.0  # 5성 스윗스팟 최대 점수
     sweet_spot_max_box: float = 18.0    # 5성 스윗스팟 박스권 진폭 상한
     overextended_score: float = 85.0    # 2성 과열권 경고 점수
+    enable_overhead_gate: bool = False  # 상단 장애물 필터 (Overhead Space Gate) 활성화 여부
+    min_overhead_space_pct: float = 5.0 # 상단 저항선까지 최소 잔여 공간 (%)
+    require_prev_close_poc: bool = False # 직전 캔들 POC 지지 안착 확인 (Close >= POC * buffer)
+    require_ma5_recovery: bool = False   # 안전벨트: 바닥 반등 시 일봉 5선 회복 필수
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -165,19 +169,26 @@ def evaluate_wyckoff_setup(
         reasons.append(f"조건 3 보류 (+0점): 20일선 상승 기울기 (기울기 {slope_ma20:.2f}%, 평탄화 구간 초과)")
 
     # ----------------------------------------------------
-    # [조건 4] 볼륨 프로파일 최대 매물대 (POC) 지지 안착
+    # [조건 4] 볼륨 프로파일 최대 매물대 (POC) 지지 안착 강화
     # 판정: Current Price >= POC * params.poc_support_buffer AND 이격 <= params.poc_distance_max -> +25점
+    # 직전 봉 안착 옵션(params.require_prev_close_poc): 직전 종가도 POC * buffer 이상이어야 지지 인정
     # ----------------------------------------------------
     daily_poc = calculate_volume_profile_poc(poc_df, lookback=120, bins=40)
     poc_support_threshold = daily_poc * params.poc_support_buffer
     poc_distance_pct = ((current_price - daily_poc) / daily_poc * 100.0) if daily_poc > 0 else 0.0
 
-    if current_price < poc_support_threshold:
+    prev_close_val = float(prev_row["close"]) if pd.notna(prev_row["close"]) else 0.0
+    prev_poc_ok = (prev_close_val >= poc_support_threshold) if params.require_prev_close_poc else True
+
+    if current_price < poc_support_threshold or not prev_poc_ok:
         is_failed = True
-        reasons.append(f"조건 4 탈락: POC 매물대 저항 하방 갇힘 (현재가 ${current_price:.2f} < POC ${daily_poc:.2f})")
+        if current_price < poc_support_threshold:
+            reasons.append(f"조건 4 탈락: POC 매물대 저항 하방 갇힘 (현재가 ${current_price:.2f} < POC 기준선 ${poc_support_threshold:.2f})")
+        else:
+            reasons.append(f"조건 4 탈락: 직전 캔들 POC 미안착 (직전가 ${prev_close_val:.2f} < POC 기준선 ${poc_support_threshold:.2f})")
     elif poc_distance_pct <= params.poc_distance_max:
         score += 25.0
-        reasons.append(f"조건 4 통과 (+25점): 120일 POC 매물대 지지판 안착 (POC ${daily_poc:.2f}, 이격 {poc_distance_pct:+.1f}%)")
+        reasons.append(f"조건 4 통과 (+25점): 120일 POC 매물대 지지판 온전 안착 (POC ${daily_poc:.2f}, 이격 {poc_distance_pct:+.1f}%)")
     else:
         reasons.append(f"조건 4 보류 (+0점): POC 대비 단기 과이격 (POC ${daily_poc:.2f}, 이격 {poc_distance_pct:+.1f}%, 기준 +{params.poc_distance_max:.1f}% 이내)")
 
@@ -211,12 +222,19 @@ def evaluate_wyckoff_setup(
         reasons.append(f"조건 5-3 미충족 (+0점): RSI 구간 이탈 (RSI {rsi_now:.1f}, 기준 {params.rsi_min:.1f}~{params.rsi_max:.1f})")
 
     # ----------------------------------------------------
-    # [조건 6] 진입 트리거 (Trigger)
+    # [조건 6] 진입 트리거 (Trigger) & 안전벨트 확인
     # 1. Current Price >= MA5 and Current Price >= MA20: +10점
+    #    안전벨트 조건 (require_ma5_recovery): 일봉 5선 미회복 시 진입 차단 (is_failed = True)
     # 2. MACD Histogram > 0 또는 직전 봉 대비 상승: +5점
     # ----------------------------------------------------
     ma5_val = float(row["ma5"]) if pd.notna(row["ma5"]) else 0.0
     ma20_val = float(row["ma20"]) if pd.notna(row["ma20"]) else 0.0
+
+    # 안전벨트 확인: 바닥 반등 시 일봉 5선 회복 필수
+    if params.require_ma5_recovery and current_price < ma5_val:
+        is_failed = True
+        reasons.append(f"안전벨트 탈락: 일봉 5선(${ma5_val:.2f}) 미회복으로 바닥 반등 진입 차단 (현재가 ${current_price:.2f})")
+
     if current_price >= ma5_val and current_price >= ma20_val:
         score += 10.0
         reasons.append(f"조건 6-1 통과 (+10점): 단기 이평선(5선/20선) 동시 상회 안착")
@@ -233,6 +251,42 @@ def evaluate_wyckoff_setup(
 
     # 총점 상한 클리핑 (최대 100.0)
     technical_score = min(100.0, float(score))
+
+    # ----------------------------------------------------
+    # [상단 장애물 필터 (Overhead Space Gate)]
+    # 1. 캔들이 구름대 아래에 위치한 역배열 종목:
+    #    - 1차 상단 저항선 = min(구름대 하단, 일봉 60선)
+    #    - 잔여 공간 = ((저항선 - 현재가) / 현재가) * 100
+    #    - 최소 +5.0% 이상 비어있지 않으면 진입 즉시 차단 (Return None)
+    # 2. 정배열 눌림목: 구름대 위에 안착한 상태 -> 저항 필터 제외
+    # ----------------------------------------------------
+    cloud_top_val = float(row["cloud_top"]) if ("cloud_top" in row and pd.notna(row["cloud_top"])) else None
+    cloud_bottom_val = float(row["cloud_bottom"]) if ("cloud_bottom" in row and pd.notna(row["cloud_bottom"])) else None
+    ma60_val = float(row["ma60"]) if ("ma60" in row and pd.notna(row["ma60"])) else None
+    overhead_space_pct = None
+
+    if params.enable_overhead_gate and cloud_bottom_val is not None and cloud_bottom_val > 0:
+        # 역배열 (구름대 하단 하회 종목)
+        if current_price < cloud_bottom_val:
+            if ma60_val is not None and ma60_val > 0:
+                res_line = min(cloud_bottom_val, ma60_val)
+            else:
+                res_line = cloud_bottom_val
+
+            overhead_space_pct = ((res_line - current_price) / current_price) * 100.0
+
+            if overhead_space_pct < params.min_overhead_space_pct:
+                logger.debug(
+                    f"[{ticker}] Overhead Space Gate blocked: space {overhead_space_pct:.1f}% "
+                    f"< {params.min_overhead_space_pct:.1f}% (Res: ${res_line:.2f}, Price: ${current_price:.2f})"
+                )
+                return None
+            else:
+                reasons.append(
+                    f"상단 저항 게이트 통과: 저항선(${res_line:.2f})까지 잔여공간 +{overhead_space_pct:.1f}% (기준 +{params.min_overhead_space_pct:.1f}% 이상)"
+                )
+        else:
+            reasons.append(f"상단 저항 게이트 예외: 구름대(${cloud_bottom_val:.2f}) 상방 안착 (저항 필터 제외)")
 
     # ----------------------------------------------------
     # [별점 및 스윗스팟 판정]
@@ -298,4 +352,7 @@ def evaluate_wyckoff_setup(
         tp2=round(tp2, 2),
         rr_ratio=rr_ratio,
         reasons=reasons,
+        cloud_top=round(cloud_top_val, 2) if cloud_top_val is not None else None,
+        cloud_bottom=round(cloud_bottom_val, 2) if cloud_bottom_val is not None else None,
+        overhead_space_pct=round(overhead_space_pct, 1) if overhead_space_pct is not None else None,
     )

@@ -133,8 +133,11 @@ def get_position_monitoring_section() -> str:
         current_price = float(pos["current_price"] or entry_price)
         stop_loss = float(pos["stop_loss"])
         tp1 = float(pos["tp1"])
+        tp2 = float(pos.get("tp2") or (entry_price * 1.5))
         holding_days = pos["holding_days"] or 0
         entry_date = str(pos["entry_date"])
+        tp1_hit = bool(pos.get("tp1_hit", False))
+        max_days = int(pos.get("max_holding_days", 20))
 
         # 수익률
         pnl_pct = ((current_price - entry_price) / entry_price) * 100.0
@@ -170,6 +173,14 @@ def get_position_monitoring_section() -> str:
         score_delta = current_score - entry_score
         delta_sign = "▲" if score_delta > 0 else ("▼" if score_delta < 0 else "▶")
 
+        # 모드 태그 및 목표가 라인 설정
+        if tp1_hit:
+            mode_badge = " [🟢 <b>무위험 Free-Ride 모드</b> | 50% 익절완료]"
+            target_line = f"  - 목표: 2차 <b>TP2 <code>${tp2:.2f}</code></b> (기한 <code>D+{holding_days}/{max_days}일</code>) | 손절: 본전보호 <code>${stop_loss:.2f}</code>\n"
+        else:
+            mode_badge = ""
+            target_line = f"  - 목표: 1차 <b>TP1 <code>${tp1:.2f}</code></b> (기한 <code>D+{holding_days}/{max_days}일</code>) | 손절: SL <code>${stop_loss:.2f}</code>\n"
+
         # 조기 경보 로직 판정
         is_poc_broken = daily_poc > 0 and current_price < (daily_poc * 0.985)
         is_score_plummeted = score_delta <= -10.0
@@ -188,10 +199,10 @@ def get_position_monitoring_section() -> str:
             warning_line = ""
 
         item_str = (
-            f"• <b>{ticker}</b> (진입 D+{holding_days}): 현재가 <code>${current_price:.2f}</code> "
+            f"• <b>{ticker}</b> (진입 D+{holding_days}/{max_days}){mode_badge}: 현재가 <code>${current_price:.2f}</code> "
             f"(<code>{pnl_sign}{pnl_pct:.1f}%</code>)\n"
             f"  - 점수: {entry_score:.0f}점 ➔ <b>{current_score:.0f}점</b> ({status_desc})\n"
-            f"  - 목표: TP1 <code>${tp1:.2f}</code> | 손절: SL <code>${stop_loss:.2f}</code>\n"
+            f"{target_line}"
             f"{warning_line}"
         )
         items_text.append(item_str)

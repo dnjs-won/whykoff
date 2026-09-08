@@ -157,6 +157,8 @@ CREATE TABLE IF NOT EXISTS active_trades (
     close_reason VARCHAR(50),             -- 'TP1_TARGET', 'STOP_LOSS', 'TIMEOUT_20D'
     
     reconfirmed_count INTEGER DEFAULT 1,  -- OPEN 중 추가 스캔된 횟수
+    tp1_hit BOOLEAN DEFAULT FALSE,        -- 1차 목표가(TP1) 도달 및 50% 분할 익절 완료 여부
+    max_holding_days INTEGER DEFAULT 20,  -- 보유 기한 (기본 20일, TP1 도달 시 40일 연장)
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
