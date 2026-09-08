@@ -36,8 +36,12 @@ echo "🤖 [Whykoff] 텔레그램 봇 커맨드 메뉴 등록 시작 (토큰: $M
 COMMANDS_PAYLOAD='{
   "commands": [
     {
+      "command": "check",
+      "description": "개별종목 정밀 진단 및 미포착 사유 분석 (/check [티커])"
+    },
+    {
       "command": "scan",
-      "description": "와이코프 매집 스캔 (/scan [서브섹터] 또는 전체)"
+      "description": "와이코프 매집 스캔 (/scan [서브섹터/티커] 또는 전체)"
     },
     {
       "command": "portfolio",
