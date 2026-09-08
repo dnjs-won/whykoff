@@ -36,7 +36,6 @@ NEW_TICKERS = [
     ('MNDY', 'IGV', 'AI_SOFTWARE'),
     ('KVYO', 'IGV', 'AI_SOFTWARE'),
     ('IOT', 'IGV', 'AI_SOFTWARE'),
-    ('CFLT', 'IGV', 'AI_SOFTWARE'),
     ('GTLB', 'IGV', 'AI_SOFTWARE'),
     ('DUOL', 'IGV', 'AI_SOFTWARE'),
     ('RDDT', 'IGV', 'AI_SOFTWARE'),
@@ -58,14 +57,12 @@ NEW_TICKERS = [
     ('ALGN', 'XLV', 'BIOTECH'),
     ('PEN', 'XLV', 'BIOTECH'),
     ('RMD', 'XLV', 'BIOTECH'),
-    ('HOLX', 'XLV', 'BIOTECH'),
     ('TFX', 'XLV', 'BIOTECH'),
 
     # Financials & Fintech
     ('SPGI', 'XLF', 'XLF'),
     ('MCO', 'XLF', 'XLF'),
     ('CB', 'XLF', 'XLF'),
-    ('MMC', 'XLF', 'XLF'),
     ('AON', 'XLF', 'XLF'),
     ('PGR', 'XLF', 'XLF'),
     ('TRV', 'XLF', 'XLF'),
@@ -110,7 +107,6 @@ NEW_TICKERS = [
     ('SYY', 'XLP', 'XLP'),
 
     # Energy, Nuclear, Clean, Crypto, Comm, Cyber, DataCenter
-    ('HES', 'XLE', 'XLE'),
     ('UEC', 'URA', 'NUCLEAR'),
     ('NXE', 'URA', 'NUCLEAR'),
     ('DNN', 'URA', 'NUCLEAR'),
@@ -133,6 +129,8 @@ def main():
     print("================================================================================")
 
     with get_db_cursor(commit=True) as (cur, _):
+        # 0. 합병/상장폐지 티커 비활성화
+        cur.execute("UPDATE tickers SET is_active = FALSE WHERE ticker IN ('MMC', 'HES', 'HOLX', 'CFLT');")
         # 1. 스키마 증분 마이그레이션 적용
         print("1. Verifying active_trades table columns...")
         cur.execute("""
@@ -161,6 +159,29 @@ def main():
         cur.execute("SELECT COUNT(*) FROM tickers WHERE is_active = TRUE;")
         active_count = cur.fetchone()[0]
         print(f"3. Active Universe Status: {active_count} tickers active.")
+
+        # 4. 신규 편입 종목 초기 캔들 데이터(최소 2년치, 500봉) 검사 및 자동 적재
+        print("4. Checking historical candle coverage (minimum 120 bars required for Wyckoff scanner)...")
+        cur.execute("""
+            SELECT t.ticker 
+            FROM tickers t
+            LEFT JOIN (
+                SELECT ticker, COUNT(*) as cnt 
+                FROM ohlcv_daily 
+                GROUP BY ticker
+            ) c ON t.ticker = c.ticker
+            WHERE t.is_active = TRUE AND COALESCE(c.cnt, 0) < 120
+            ORDER BY t.ticker;
+        """)
+        insufficient_tickers = [r[0] for r in cur.fetchall()]
+
+        if insufficient_tickers:
+            print(f"   ⚠️ Found {len(insufficient_tickers)} tickers with < 120 candles. Fetching initial 2y history...")
+            from collectors.market_collector import collect_daily_candles
+            saved = collect_daily_candles(tickers=insufficient_tickers, period="2y", chunk_size=30)
+            print(f"   ✅ Successfully loaded {saved} initial candles for new tickers.")
+        else:
+            print("   ✅ All active tickers have sufficient historical candles (>= 120 bars).")
 
     print("================================================================================")
     print("🎉 GCP Production DB Sync Complete! Safe to restart whykoff.service.")
