@@ -186,3 +186,7 @@ CREATE TABLE IF NOT EXISTS strategy_benchmarks (
     params_config JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- 10. 무중단 스키마 증분 마이그레이션 (기존 테이블 신규 컬럼 안전 추가)
+ALTER TABLE active_trades ADD COLUMN IF NOT EXISTS tp1_hit BOOLEAN DEFAULT FALSE;
+ALTER TABLE active_trades ADD COLUMN IF NOT EXISTS max_holding_days INTEGER DEFAULT 20;
