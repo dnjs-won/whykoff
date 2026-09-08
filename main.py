@@ -51,7 +51,8 @@ def print_system_banner() -> None:
 def main():
     parser = argparse.ArgumentParser(description="Whykoff Stock System CLI")
     parser.add_argument("--briefing", action="store_true", help="Run 1-shot postmarket briefing and send to Telegram")
-    parser.add_argument("--scan", type=str, nargs="?", const="ALL", help="Run on-demand Wyckoff scan for subsector")
+    parser.add_argument("--check", type=str, metavar="TICKER", help="Diagnose a single stock ticker with detailed pass/fail reasons (e.g. --check NVDA)")
+    parser.add_argument("--scan", type=str, nargs="?", const="ALL", help="Run on-demand Wyckoff scan for subsector or single ticker")
     parser.add_argument(
         "--collect",
         type=str,
@@ -101,7 +102,20 @@ def main():
             run_all_collectors()
         return
 
-    # 4. 즉시 서브섹터 스캔 모드
+    # 4. 개별 종목 정밀 진단 모드 (--check TICKER)
+    if args.check:
+        from services.ticker_inspector import inspect_single_ticker, format_inspection_cli, format_inspection_telegram
+        ticker_target = args.check.strip().upper()
+        logger.info(f"🔎 Running individual Wyckoff diagnosis for {ticker_target}...")
+        diag = inspect_single_ticker(ticker_target)
+        report_cli = format_inspection_cli(diag)
+        print("\n" + report_cli + "\n")
+        if args.telegram:
+            logger.info(f"📢 Sending diagnosis for {ticker_target} to Telegram...")
+            send_telegram_message(format_inspection_telegram(diag))
+        return
+
+    # 5. 즉시 서브섹터 / 개별종목 스캔 모드
     if args.scan:
         subsector = None if args.scan == "ALL" else args.scan
         logger.info(f"🔍 Running on-demand Wyckoff scan for: {subsector or 'ALL'}...")

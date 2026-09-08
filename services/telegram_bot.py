@@ -136,12 +136,31 @@ SUBSECTOR_ALIASES = {
 }
 
 
+def handle_check_ticker_command(ticker: str) -> str:
+    """
+    /check [티커] 커맨드 처리:
+    개별 종목 정밀 진단 및 와이코프 6대 매집 조건, POC 지지, 상단 공간 게이트 판정 및 미포착 사유 분석.
+    """
+    from services.ticker_inspector import inspect_single_ticker, format_inspection_telegram
+    diag = inspect_single_ticker(ticker, auto_collect=True)
+    return format_inspection_telegram(diag)
+
+
 def handle_scan_command(subsector: Optional[str] = None) -> str:
     """
-    /scan [서브섹터] 커맨드 처리:
-    지정된 서브섹터(반도체, 광통신, 암호화폐, 양자컴퓨터 등) 또는 전체 종목들을 스캔.
+    /scan [서브섹터] 또는 /scan [티커] 커맨드 처리:
+    지정된 서브섹터(반도체, 광통신, 암호화폐 등) 스캔 또는 단일 종목 티커 정밀 진단.
     """
     subsector_upper = subsector.strip().upper() if subsector else None
+    
+    # 단일 종목 티커로 입력된 경우 개별 진단으로 자동 위임
+    if subsector_upper and subsector_upper not in SUBSECTOR_ALIASES:
+        with get_db_cursor() as (cur, _):
+            cur.execute("SELECT COUNT(*) FROM tickers WHERE ticker = %s OR query_ticker = %s;", (subsector_upper, subsector_upper))
+            is_in_tickers = cur.fetchone()[0] > 0
+        if is_in_tickers or (len(subsector_upper) <= 5 and subsector_upper.isalpha()):
+            return handle_check_ticker_command(subsector_upper)
+
     target_sub = SUBSECTOR_ALIASES.get(subsector_upper, subsector_upper) if subsector_upper else None
     
     # 스캔 대상 종목 추출 (서브섹터 및 섹터 ETF 매핑)
@@ -277,8 +296,9 @@ def handle_telegram_updates(last_offset: int = 0) -> int:
                 reply = (
                     "🤖 <b>Whykoff 퀀트 트레이딩 봇 가이드</b>\n\n"
                     "<b>1. 기본 명령어:</b>\n"
+                    "• <code>/check [티커]</code>: <b>개별종목 정밀 진단 & 미포착 사유 분석</b> (예: <code>/check NVDA</code>)\n"
                     "• <code>/scan</code>: 전체 시장 와이코프 매집 스캔\n"
-                    "• <code>/scan [서브섹터]</code>: 세부 테마 집중 스캔\n"
+                    "• <code>/scan [서브섹터]</code>: 세부 테마 집중 스캔 (종목 티커 입력 시 자동 개별 진단)\n"
                     "• <code>/portfolio</code>: 현재 보유 포지션 수익률/조기경보\n"
                     "• <code>/briefing</code>: 오늘 장마감 종합 브리핑 즉시 발송\n"
                     "• <code>/help</code>: 도움말 및 서브섹터 목록 안내\n\n"
@@ -295,6 +315,16 @@ def handle_telegram_updates(last_offset: int = 0) -> int:
                     "• <b>전기차:</b> <code>/scan EV</code> (TSLA, RIVN 등)\n"
                 )
                 send_telegram_message(reply, chat_id=chat_id)
+
+            elif text.startswith("/check") or text.startswith("/inspect") or text.startswith("/why"):
+                parts = text.split()
+                if len(parts) > 1:
+                    ticker_arg = parts[1].strip().upper()
+                    send_telegram_message(f"🔍 <b>{ticker_arg}</b> 정밀 와이코프 매집 진단 분석 중...", chat_id=chat_id)
+                    reply = handle_check_ticker_command(ticker_arg)
+                    send_telegram_message(reply, chat_id=chat_id)
+                else:
+                    send_telegram_message("⚠️ 진단할 종목 티커를 입력해주세요.\n예: <code>/check NVDA</code> 또는 <code>/check TSLA</code>", chat_id=chat_id)
 
             elif text.startswith("/scan"):
                 parts = text.split()
@@ -323,7 +353,8 @@ def handle_telegram_updates(last_offset: int = 0) -> int:
 
 
 TELEGRAM_BOT_COMMANDS = [
-    {"command": "scan", "description": "와이코프 매집 스캔 (/scan [서브섹터] 또는 전체)"},
+    {"command": "check", "description": "개별종목 정밀 진단 및 미포착 사유 분석 (/check [티커])"},
+    {"command": "scan", "description": "와이코프 매집 스캔 (/scan [서브섹터/티커] 또는 전체)"},
     {"command": "portfolio", "description": "현재 보유 포지션 수익률 및 조기경보 현황"},
     {"command": "briefing", "description": "장마감 종합 브리핑(매크로+스윗스팟) 즉시 조회"},
     {"command": "help", "description": "봇 사용 가이드 및 지원 서브섹터 목록"},

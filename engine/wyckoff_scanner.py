@@ -280,7 +280,14 @@ def evaluate_wyckoff_setup(
                     f"[{ticker}] Overhead Space Gate blocked: space {overhead_space_pct:.1f}% "
                     f"< {params.min_overhead_space_pct:.1f}% (Res: ${res_line:.2f}, Price: ${current_price:.2f})"
                 )
-                return None
+                if strict_filter:
+                    return None
+                else:
+                    is_failed = True
+                    reasons.append(
+                        f"상단 저항 게이트 차단: 저항선(${res_line:.2f})까지 잔여공간 {overhead_space_pct:+.1f}% "
+                        f"(기준 +{params.min_overhead_space_pct:.1f}% 미달, 상단 저항에 막힘 ⚠️)"
+                    )
             else:
                 reasons.append(
                     f"상단 저항 게이트 통과: 저항선(${res_line:.2f})까지 잔여공간 +{overhead_space_pct:.1f}% (기준 +{params.min_overhead_space_pct:.1f}% 이상)"
