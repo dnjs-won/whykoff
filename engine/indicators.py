@@ -105,9 +105,12 @@ def calculate_mfi(df: pd.DataFrame, period: int = 14) -> pd.Series:
     total_flow = pos_mf + neg_mf
     mfi = 100.0 * (pos_mf / total_flow.replace(0.0, np.nan))
 
-    # 분모 0 보정 (자금 유입과 유출이 모두 0이면 중립 50.0, 유출만 0이면 100.0)
-    mfi = mfi.where(total_flow != 0.0, 50.0)
+    # 분모 0 보정:
+    # 1) 자금 유출(neg_mf)만 0이고 유입(pos_mf > 0)이 있으면 100.0
+    # 2) 유입과 유출이 모두 0(total_flow == 0 또는 volume 0)이면 중립 50.0
     mfi = mfi.where(neg_mf != 0.0, 100.0)
+    mfi = mfi.where(total_flow != 0.0, 50.0)
+    mfi = mfi.fillna(50.0)
 
     return mfi
 

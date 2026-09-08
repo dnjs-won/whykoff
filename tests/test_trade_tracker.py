@@ -14,6 +14,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if BASE_DIR not in sys.path:
     sys.path.append(BASE_DIR)
 
+import psycopg2
 from core.database import get_db_cursor
 from core.logger import get_logger
 from core.models import WyckoffSetupResult
@@ -32,17 +33,24 @@ class TestTradeTracker(unittest.TestCase):
     """포지션 트래커 상태 머신 단위 및 DB 연동 테스트"""
 
     def setUp(self):
-        """각 테스트 전 테스트용 더미 레코드 정리"""
+        """각 테스트 전 테스트용 더미 레코드 정리 (DB 접속 불가 시에만 SkipTest)"""
         self.test_tickers = ["TEST_NVDA", "TEST_PLTR", "TEST_TSLA", "TEST_AAPL"]
-        with get_db_cursor(commit=True) as (cur, _):
-            cur.execute("DELETE FROM active_trades WHERE ticker = ANY(%s);", (self.test_tickers,))
-            cur.execute("DELETE FROM scan_snapshots WHERE ticker = ANY(%s);", (self.test_tickers,))
+        try:
+            with get_db_cursor(commit=True) as (cur, _):
+                cur.execute("DELETE FROM active_trades WHERE ticker = ANY(%s);", (self.test_tickers,))
+                cur.execute("DELETE FROM scan_snapshots WHERE ticker = ANY(%s);", (self.test_tickers,))
+        except (psycopg2.OperationalError, ConnectionRefusedError, OSError) as e:
+            raise unittest.SkipTest(f"PostgreSQL connection unavailable (isolated offline test environment): {e}")
 
     def tearDown(self):
         """테스트 후 정리"""
-        with get_db_cursor(commit=True) as (cur, _):
-            cur.execute("DELETE FROM active_trades WHERE ticker = ANY(%s);", (self.test_tickers,))
-            cur.execute("DELETE FROM scan_snapshots WHERE ticker = ANY(%s);", (self.test_tickers,))
+        try:
+            with get_db_cursor(commit=True) as (cur, _):
+                cur.execute("DELETE FROM active_trades WHERE ticker = ANY(%s);", (self.test_tickers,))
+                cur.execute("DELETE FROM scan_snapshots WHERE ticker = ANY(%s);", (self.test_tickers,))
+        except Exception:
+            pass
+
 
     def test_trade_lifecycle_and_duplicate_prevention(self):
         logger.info("=" * 80)

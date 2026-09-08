@@ -210,3 +210,40 @@ stateDiagram-v2
 • <b>평균 성과:</b> 평균익절 <code>+18.2%</code> / 평균손절 <code>-5.1%</code>
 • <b>평균 보유일:</b> 7.2영업일 | 현재 OPEN 포지션: 2건
 ```
+
+---
+
+## 8. 기관 정량 감사(Institutional Quant Audit) 개선 및 신규 엔진 명세
+
+GPT-6 ASTRA 기관 정량 감사(`GPT6_ASTRA_SYSTEM_AUDIT_REPORT.md`)를 통해 식별된 10대 결함 개선 및 신규 아키텍처 명세:
+
+### 8.1 10대 결함 해결 (Bug Fixes & Hardening)
+1. **[C1] 하드 게이트 탈락 시 진입 불가(`entry_eligible=False`) 보장**:
+   - `strict_filter=False` 진단 모드에서도 조건 1(하락폭), 조건 2(박스권), 조건 3(20선), 조건 4(POC) 탈락 시 `entry_eligible = False`, `is_sweet_spot = False`, `stars_rating = 1` 강제. 백테스터 및 트래커의 진입을 원천 차단.
+2. **[C2] 백테스터-트래커 2단계 분할 익절(Partial Swing) 로직 일치**:
+   - TP1(+20%) 도달 시 50% 분할 익절, 손절선을 본전($E \times 1.005$)으로 상향, 최대 보유일을 40일로 연장.
+   - TP2 도달 시 잔여 50% 익절 (실현 수익률: $0.5 \times 20\% + 0.5 \times 50\% = +35.0\%$).
+   - 본전 손절 도달 시 잔여 50% 본전 정리 (실현 수익률: $0.5 \times 20\% + 0.5 \times 0.5\% = +10.25\%$).
+3. **[C3] 오버나이트 갭다운 손절가 실체결**:
+   - 시가가 SL 밑으로 갭하락하여 개장한 경우 가상의 SL가가 아닌 실제 시가(`open_price`)로 체결하여 왜곡 제거.
+4. **[C4] TP1 미도달 상태에서 TP2 폭등 시 분할 정산**:
+   - 당일 장대양봉으로 TP1을 건너뛰고 TP2까지 도달한 경우 50% TP1 + 50% TP2 (+35.0%) 분할 회계 정산.
+5. **[C5] 드라이런(`auto_promote=False`) 승격 플래그 무력화 방지**:
+   - `compare_and_promote` 호출 시 `auto_promote=False`이면 벤치마크 점수가 우수하더라도 `is_champion = False`로 저장.
+6. **[H1] 상단 장애물 필터(Overhead Space Gate) 정밀화**:
+   - 현재가보다 *위에* 위치한 저항선만 필터링 대상으로 삼으며, 일목 구름대 내부 진입 시 구름대 상단(`cloud_top`)까지의 거리를 측정.
+7. **[H2] TP1 달성 포지션 40영업일 만료 분기 독립화**:
+   - TP1이 이미 달성된 포지션이라도 40영업일에 도달하면 High가 TP1 이상이어도 `TIMEOUT_40D`로 정상 종료.
+8. **[H3] 세션 평가 멱등성 및 `last_evaluated_date` 관리**:
+   - 동일 세션 일자에 평가가 중복 실행되더라도 `holding_days`가 이중 가산되지 않도록 방어.
+9. **[H4] 최종 캔들 손절 및 Terminal Mark-to-Market 정산**:
+   - 데이터셋 종료 시점까지 미청산된 포지션을 버리지 않고 최종 종가 기준으로 `TERMINAL_MTM` 평가 기록.
+10. **[M3] MFI 거래량 0 구간 중립치(50.0) 반환**:
+    - 분모 0 또는 거래량 전무 시 극단값 100.0이 아닌 시장 중립치 `50.0` 반환.
+
+### 8.2 신규 아키텍처 엔진 (Pillars 2 & 4)
+1. **[Pillar 2] 1시간봉 Wyckoff Spring & Secondary Test(ST) 타점 엔진 ([`engine/hourly_trigger.py`](file:///C:/project_k/whykoff/engine/hourly_trigger.py))**:
+   - 일봉 5성 스윗스팟 종목에 대해 1시간봉 상의 Spring(박스 하단 일시 이탈 후 급반등)과 거래량이 급감한 Secondary Test(ST)를 감지하여 진입 Buy Stop 및 세부 손절선 제공.
+2. **[Pillar 4] 갭 위험 반영 포지션 사이징 & 한도 관리자 ([`engine/risk_allocator.py`](file:///C:/project_k/whykoff/engine/risk_allocator.py))**:
+   - 총 자산(NAV) 기준 단일 거래 0.25% 리스크, 종목당 최대 5%, 세부 서브섹터당 최대 20% 익스포저 한도 강제.
+

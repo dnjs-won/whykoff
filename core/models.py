@@ -32,6 +32,9 @@ class WyckoffSetupResult:
     cloud_top: Optional[float] = None
     cloud_bottom: Optional[float] = None
     overhead_space_pct: Optional[float] = None
+    entry_eligible: bool = True
+    failed_gates: List[str] = field(default_factory=list)
+    raw_score: Optional[float] = None
 
 @dataclass
 class ConfluenceSignalResult:

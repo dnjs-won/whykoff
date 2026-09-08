@@ -119,8 +119,12 @@
 1. **컨텍스트 복원 방법:**
    - 대화 세션이 새로 열리더라도 이 문서(`PROJECT_STATUS.md`)와 `CORE_LOGIC_SPECS.md`, `README.md`를 먼저 읽으면 현재 시스템의 모든 설계 결정과 상태를 100% 파악할 수 있습니다.
 2. **코드 변경 시 필수 절차:**
-   - 임의의 로직 수정 후 반드시 `python -m unittest discover tests`를 실행하여 7개 테스트 케이스의 통과 여부를 검증하십시오.
+   - 임의의 로직 수정 후 반드시 `python -m unittest discover tests`를 실행하여 32개 테스트 케이스의 통과 여부(100% Pass, 오프라인 DB 격리 시 0 errors)를 검증하십시오.
 3. **새로운 종목 추가 시:**
    - `tickers` 테이블에 INSERT 후, `python -c "from collectors.market_collector import collect_single_ticker_history; collect_single_ticker_history('TICKER', '2y')"`를 실행하여 초기 500봉을 적재하십시오.
 4. **전략 튜닝 및 게이트 검증 시:**
    - 파라미터 수정 후 `python -c "from engine.backtester import evaluate_strategy_gate; evaluate_strategy_gate()"`를 실행하여 기존 챔피언(`wyckoff_v2.0_full_swing`)의 기대값(+1.58%)을 넘어서는지 확인하십시오.
+5. **기관 정량 감사(Institutional Quant Audit) 상태:**
+   - GPT-6 ASTRA 1차 감사 10대 결함(C1~C5, H1~H4, M3) 및 후속 검토 국소 결함 전수 조치 완료.
+   - 단, 백테스트 MDD 지표는 현재 "거래 연쇄 복리 낙폭(Trade-Chain Compounding MDD)"으로 정직하게 산출·기록되며, 진정한 시계열 포트폴리오 NAV(Net Asset Value) 기반 MDD는 향후 Pillar 4 Shadow 모의 체결 원장 구축 단계에서 정밀 측정 예정 (현행 운영 서버 챔피언 전략 `wyckoff_v2.0_full_swing` 안정적 가동 유지).
+

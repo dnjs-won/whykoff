@@ -175,7 +175,7 @@ def get_position_monitoring_section() -> str:
 
         # 모드 태그 및 목표가 라인 설정
         if tp1_hit:
-            mode_badge = " [🟢 <b>무위험 Free-Ride 모드</b> | 50% 익절완료]"
+            mode_badge = " [🟢 <b>본전 보호 Free-Ride 모드</b> | 50% 익절완료 (갭위험 유의)]"
             target_line = f"  - 목표: 2차 <b>TP2 <code>${tp2:.2f}</code></b> (기한 <code>D+{holding_days}/{max_days}일</code>) | 손절: 본전보호 <code>${stop_loss:.2f}</code>\n"
         else:
             mode_badge = ""

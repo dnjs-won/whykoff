@@ -1,0 +1,132 @@
+{
+  "statistics": {
+    "input_source": "Follow-up request aggregates, not independently recovered trades",
+    "wins": 21,
+    "n": 40,
+    "wilson_95_pct": [
+      37.49736210669248,
+      67.0645298873211
+    ],
+    "exact_two_sided_p_vs_50pct": 0.8746293123804207,
+    "exact_power_n40_at_p525": 0.04818667092665714,
+    "normal_approx_n_two_sided_alpha05_power80": {
+      "0.525": 3138,
+      "0.55": 783,
+      "0.6": 194
+    },
+    "expectancy_from_rounded_means_pct": 2.036000000000001,
+    "profit_factor_from_rounded_means": 1.5530730050933785,
+    "payoff_break_even_win_rate": 0.4157725321888412,
+    "expectancy_ci": null,
+    "profit_factor_ci": null,
+    "portfolio_mdd": null
+  },
+  "observations": {
+    "equal_volume_st_accepted": {
+      "ticker": "AUDIT",
+      "triggered": true,
+      "state": "ST_CONFIRMED",
+      "hourly_close": 100.0,
+      "buy_stop": 100.01,
+      "buy_limit": 100.21,
+      "hourly_stop_loss": 98.0,
+      "hourly_risk_pct": 2.01,
+      "spring_low": 98.5,
+      "st_low": 99.0,
+      "reasons": [
+        "1H Spring 포착: 베이스 저점 $99.00 하향 이탈 후 복구 (저점 $98.50, 종가 $99.20)",
+        "1H ST 확정: Spring 저점($98.50) 상회 지지 (ST 저점 $99.00, 거래량 수렴)"
+      ]
+    },
+    "ineligible_daily_still_triggers": true,
+    "old_st_reused_after_breakdown": {
+      "ticker": "AUDIT",
+      "triggered": true,
+      "state": "ST_CONFIRMED",
+      "hourly_close": 95.0,
+      "buy_stop": 100.01,
+      "buy_limit": 100.21,
+      "hourly_stop_loss": 98.0,
+      "hourly_risk_pct": 2.01,
+      "spring_low": 98.5,
+      "st_low": 99.0,
+      "reasons": [
+        "1H Spring 포착: 베이스 저점 $99.00 하향 이탈 후 복구 (저점 $98.50, 종가 $99.20)",
+        "1H ST 확정: Spring 저점($98.50) 상회 지지 (ST 저점 $99.00, 거래량 수렴)"
+      ]
+    },
+    "gross_risk_and_aggregate_name_caps_not_enforced": {
+      "ticker": "AUDIT",
+      "entry_price": 100.0,
+      "stop_loss": 95.0,
+      "effective_risk_pct": 6.0,
+      "target_weight": 4.1,
+      "allocated_capital": 4100.0,
+      "allocated_shares": 41,
+      "risk_dollars": 246.0,
+      "subsector": "TECH",
+      "approved": true,
+      "rejection_reason": null
+    },
+    "long_entry_with_stop_above_entry_approved": {
+      "ticker": "AUDIT",
+      "entry_price": 100.0,
+      "stop_loss": 110.0,
+      "effective_risk_pct": 6.0,
+      "target_weight": 4.1,
+      "allocated_capital": 4100.0,
+      "allocated_shares": 41,
+      "risk_dollars": 246.0,
+      "subsector": "TECH",
+      "approved": true,
+      "rejection_reason": null
+    },
+    "same_bar_replay_closes_new_tp1_stop": {
+      "first": {
+        "trade_id": 1,
+        "ticker": "AUDIT",
+        "entry_price": 100.0,
+        "current_price": 115.0,
+        "stop_loss": 100.5,
+        "unrealized_pnl_pct": 15.0,
+        "mfe": 21.0,
+        "mae": -1.0,
+        "holding_days": 2,
+        "tp1_hit": true,
+        "max_holding_days": 40,
+        "is_free_ride": true,
+        "last_evaluated_date": "2025-02-03"
+      },
+      "second": {
+        "trade_id": 1,
+        "ticker": "AUDIT",
+        "entry_date": "2025-01-01",
+        "exit_date": "2025-02-03",
+        "entry_price": 100.0,
+        "exit_price": 100.5,
+        "realized_pnl_pct": 10.25,
+        "close_reason": "BREAKEVEN_SL",
+        "holding_days": 2,
+        "tp1_hit": true,
+        "max_holding_days": 40
+      }
+    },
+    "failed_gate_dry_run_preserves_incoming_champion_true": true,
+    "trade_chain_mdd_vs_two_position_nav": {
+      "engine_mdd_pct": 10.0,
+      "two_position_nav_mdd_pct": 0.0,
+      "assumptions": "Initial NAV 100, cash 90, two positions of 5 each; marks move linearly and oppositely; no costs"
+    }
+  },
+  "reviewed_file_sha256": {
+    "engine/hourly_trigger.py": "f4245f63a3554f78de157011a9bfcf80151dea432757455b72079140f8c0cdca",
+    "engine/risk_allocator.py": "2fe09bb05b018da23ad6e44935364680f7cfe17987dbc1e02ca575e8d6c01156",
+    "engine/backtester.py": "05386f2d83bcc927e527e9073f0902be91625e93474da132febb7a4ecd4ab04e",
+    "engine/wyckoff_scanner.py": "dc94c361723d449647e2e557eef17e80af86d2be53d547b1399bd4c563dacebf",
+    "services/trade_tracker.py": "a7692a2dd3441c2a8bd559448f116d6a0c19ba4880df5fa26479e67b58983863",
+    "core/models.py": "a713e885fd1f91ce215a7bbf1eb3ed7f3b18c1217babfa5e0a51b2d1b2afcf11",
+    "engine/indicators.py": "e24ed0d3b440370987eefa238f6691b3778ea68f75597454580395572db77859",
+    "tests/test_audit_remediation.py": "a22fe1f7bda20e8b37d74dbb67ee2fe84296ad0e0122d9e2906dbf825d8256fa",
+    "GPT6_ASTRA_FOLLOWUP_REQUEST.md": "0d9bf2fc3e601a0c7b7e9d6e28421bd8a913e74e86d8278e800d6f262efc71d0"
+  }
+}

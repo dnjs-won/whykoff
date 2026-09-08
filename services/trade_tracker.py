@@ -20,6 +20,12 @@ from core.models import (
 
 logger = get_logger("services.trade_tracker")
 
+# 동일 프로세스 내 세션/일자별 멱등성 보장용 평가 캐시: (trade_id, date_str) -> holding_days
+_SESSION_EVAL_CACHE: Dict[Tuple[int, str], int] = {}
+
+# 직전 평가에 사용된 원본 봉 시그니처 캐시: trade_id -> "open:high:low:close" 또는 "datetime"
+_LAST_EVALUATED_BAR_CACHE: Dict[int, str] = {}
+
 
 def record_scan_snapshots(
     results: List[WyckoffSetupResult],
@@ -134,10 +140,11 @@ def process_active_trades(
     created_trades = []
     reconfirmed_trades = []
 
-    # 진입 대상 필터링 (스윗스팟 5성이거나 4성 이상, 과열 2성은 제외)
+    # 진입 대상 필터링 (필수 게이트 통과 & 스윗스팟 5성 또는 4성 이상, 과열 2성은 제외)
     eligible_setups = [
         r for r in results 
-        if (r.stars_rating >= min_entry_stars or r.is_sweet_spot) 
+        if getattr(r, "entry_eligible", True)
+        and (r.stars_rating >= min_entry_stars or r.is_sweet_spot) 
         and not r.is_overextended
     ]
 
@@ -236,7 +243,7 @@ def process_active_trades(
 
 
 def _ensure_active_trades_columns() -> None:
-    """active_trades 테이블에 분할익절/기한연장 관련 컬럼(tp1_hit, max_holding_days) 존재 보장."""
+    """active_trades 테이블에 분할익절/기한연장/평가일자 관련 컬럼(tp1_hit, max_holding_days, last_evaluated_date) 존재 보장."""
     try:
         with get_db_cursor(commit=True) as (cur, _):
             cur.execute("""
@@ -244,6 +251,8 @@ def _ensure_active_trades_columns() -> None:
                 ADD COLUMN IF NOT EXISTS tp1_hit BOOLEAN DEFAULT FALSE;
                 ALTER TABLE active_trades 
                 ADD COLUMN IF NOT EXISTS max_holding_days INTEGER DEFAULT 20;
+                ALTER TABLE active_trades 
+                ADD COLUMN IF NOT EXISTS last_evaluated_date DATE;
             """)
     except Exception as e:
         logger.debug(f"Column check for active_trades: {e}")
@@ -300,7 +309,8 @@ def update_open_positions_daily(
             SELECT trade_id, ticker, strategy_type, entry_date, entry_price,
                    stop_loss, tp1, tp2, max_favorable_pct, max_adverse_pct,
                    holding_days, reconfirmed_count,
-                   COALESCE(tp1_hit, FALSE), COALESCE(max_holding_days, 20)
+                   COALESCE(tp1_hit, FALSE), COALESCE(max_holding_days, 20),
+                   last_evaluated_date
             FROM active_trades
             WHERE status = 'OPEN';
         """)
@@ -311,11 +321,19 @@ def update_open_positions_daily(
             return {"updated_open": [], "closed": [], "partial_tp_alerts": []}
 
         for row in open_rows:
-            (
-                trade_id, ticker, strategy_type, entry_date, entry_price,
-                stop_loss, tp1, tp2, mfe, mae, holding_days, reconf_count,
-                tp1_hit_val, max_holding_days_val
-            ) = row
+            if len(row) >= 15:
+                (
+                    trade_id, ticker, strategy_type, entry_date, entry_price,
+                    stop_loss, tp1, tp2, mfe, mae, holding_days, reconf_count,
+                    tp1_hit_val, max_holding_days_val, last_eval_d
+                ) = row[:15]
+            else:
+                (
+                    trade_id, ticker, strategy_type, entry_date, entry_price,
+                    stop_loss, tp1, tp2, mfe, mae, holding_days, reconf_count,
+                    tp1_hit_val, max_holding_days_val
+                ) = row[:14]
+                last_eval_d = None
 
             entry_p = float(entry_price)
             sl_p = float(stop_loss)
@@ -327,37 +345,105 @@ def update_open_positions_daily(
             is_tp1_hit = bool(tp1_hit_val)
             max_days = int(max_holding_days_val or 20)
 
-            # 가격 데이터 확보
+            # 멱등성 및 날짜 역행 검사 (H3 / ASTRA Review)
+            target_date_obj = target_date if isinstance(target_date, date) else datetime.strptime(str(target_date), "%Y-%m-%d").date()
+            last_eval_obj = None
+            if last_eval_d:
+                last_eval_obj = last_eval_d if isinstance(last_eval_d, date) else datetime.strptime(str(last_eval_d), "%Y-%m-%d").date()
+
+            # 1. 날짜 역행 차단: 요청 일자가 이미 평가된 일자 이하인 경우(last_eval_obj >= target_date_obj) 과거 데이터로 재평가하거나 상태를 오염시키지 않고 보존
+            if last_eval_obj is not None and last_eval_obj >= target_date_obj:
+                updated_open.append({
+                    "trade_id": trade_id,
+                    "ticker": ticker,
+                    "current_price": entry_p,
+                    "current_pnl_pct": 0.0,
+                    "holding_days": holding_d,
+                    "stop_loss": sl_p,
+                    "tp1": tp1_p,
+                    "tp2": tp2_p,
+                    "status": "OPEN",
+                })
+                continue
+
+            # 가격 데이터 확보 (Open, High, Low, Close)
             close_p = 0.0
             high_p = 0.0
             low_p = 0.0
+            open_p = None
+            bar_dt = None
 
             if price_feed and ticker in price_feed:
                 feed = price_feed[ticker]
                 close_p = float(feed.get("close", 0.0))
                 high_p = float(feed.get("high", close_p))
                 low_p = float(feed.get("low", close_p))
+                open_p = float(feed.get("open", 0.0)) if "open" in feed else None
+                bar_dt = feed.get("datetime") or feed.get("date")
             else:
-                # DB ohlcv_daily에서 최신 일봉 조회
+                # DB ohlcv_daily에서 target_date 이하의 최신 일봉 조회 (as-of 상한 준수 및 미래 참조 차단)
                 cursor.execute("""
-                    SELECT close, high, low
+                    SELECT close, high, low, open, datetime
                     FROM ohlcv_daily
-                    WHERE ticker = %s
+                    WHERE ticker = %s AND datetime <= %s
                     ORDER BY datetime DESC
                     LIMIT 1;
-                """, (ticker,))
+                """, (ticker, target_date_obj))
                 p_row = cursor.fetchone()
                 if p_row:
                     close_p = float(p_row[0])
                     high_p = float(p_row[1])
                     low_p = float(p_row[2])
+                    open_p = float(p_row[3]) if len(p_row) > 3 and p_row[3] is not None else None
+                    bar_dt = p_row[4] if len(p_row) > 4 else None
 
             if close_p <= 0:
                 logger.warning(f"[{ticker}] No valid price found for trade {trade_id}. Skipping.")
                 continue
 
-            # 보유일수 1일 증가
-            holding_d += 1
+            # 2. 동일 원본 봉(Stale Bar) 재평가 방지
+            bar_sig = f"{round(open_p or 0, 4)}:{round(high_p, 4)}:{round(low_p, 4)}:{round(close_p, 4)}"
+            if bar_dt:
+                bar_d = bar_dt.date() if hasattr(bar_dt, "date") else datetime.strptime(str(bar_dt)[:10], "%Y-%m-%d").date()
+                if last_eval_obj is not None and bar_d <= last_eval_obj:
+                    logger.warning(f"[{ticker}] Stale bar detected: bar date ({bar_d}) <= last evaluated ({last_eval_obj}). Preserving OPEN state.")
+                    updated_open.append({
+                        "trade_id": trade_id,
+                        "ticker": ticker,
+                        "current_price": close_p,
+                        "current_pnl_pct": round(((close_p - entry_p) / entry_p) * 100.0, 2),
+                        "holding_days": holding_d,
+                        "stop_loss": sl_p,
+                        "tp1": tp1_p,
+                        "tp2": tp2_p,
+                        "status": "OPEN",
+                    })
+                    continue
+            elif trade_id in _LAST_EVALUATED_BAR_CACHE and _LAST_EVALUATED_BAR_CACHE[trade_id] == bar_sig:
+                logger.warning(f"[{ticker}] Same source bar detected for trade {trade_id} under date {target_date_obj}. Preserving OPEN state.")
+                updated_open.append({
+                    "trade_id": trade_id,
+                    "ticker": ticker,
+                    "current_price": close_p,
+                    "current_pnl_pct": round(((close_p - entry_p) / entry_p) * 100.0, 2),
+                    "holding_days": holding_d,
+                    "stop_loss": sl_p,
+                    "tp1": tp1_p,
+                    "tp2": tp2_p,
+                    "status": "OPEN",
+                })
+                continue
+
+            cache_key = (trade_id, date_str)
+            if cache_key in _SESSION_EVAL_CACHE:
+                holding_d = _SESSION_EVAL_CACHE[cache_key]
+                new_evaluated_date = target_date_obj
+            else:
+                holding_d += 1
+                new_evaluated_date = target_date_obj
+                _SESSION_EVAL_CACHE[cache_key] = holding_d
+
+            _LAST_EVALUATED_BAR_CACHE[trade_id] = bar_sig
 
             # 당일 손익률 및 MFE/MAE 갱신
             current_pnl_pct = ((close_p - entry_p) / entry_p) * 100.0
@@ -366,6 +452,7 @@ def update_open_positions_daily(
 
             new_mfe = max(mfe_val, high_pnl_pct)
             new_mae = min(mae_val, low_pnl_pct)
+
 
             # ----------------------------------------------------
             # 상태 머신 판정 (분할익절 & 40일 연장 적용)
@@ -383,14 +470,23 @@ def update_open_positions_daily(
             if low_p <= sl_p:
                 is_closed = True
                 new_status = "CLOSED"
-                exit_price = sl_p
+                # C3: 갭하락 시가 반영
+                # 1) 시가가 이미 SL보다 낮게 개장한 경우 (open_p < sl_p): 시가 청산
+                # 2) 당일 전체 가격이 SL 아래에 갇힌 경우 (high_p < sl_p): 당일 시가 또는 고가 청산
+                # 3) 장중 정상적으로 SL 가격을 터치한 경우: SL 가격 청산
+                if open_p is not None and open_p > 0 and open_p < sl_p:
+                    exit_price = open_p
+                elif high_p < sl_p:
+                    exit_price = open_p if (open_p is not None and open_p > 0) else high_p
+                else:
+                    exit_price = sl_p
+                sl_gain_pct = ((exit_price - entry_p) / entry_p) * 100.0
                 if is_tp1_hit:
-                    # 1차 50%는 TP1에 이미 실현, 잔여 50%는 본전 손절가에 실현
-                    sl_gain_pct = ((sl_p - entry_p) / entry_p) * 100.0
+                    # 1차 50%는 TP1에 이미 실현, 잔여 50%는 실제 exit_price에 실현
                     realized_pnl_pct = round(0.5 * tp1_gain_pct + 0.5 * sl_gain_pct, 4)
                     close_reason = "BREAKEVEN_SL"
                 else:
-                    realized_pnl_pct = ((sl_p - entry_p) / entry_p) * 100.0
+                    realized_pnl_pct = round(sl_gain_pct, 4)
                     close_reason = "STOP_LOSS"
 
             # 2. 2차 목표가(TP2) 도달 검사 (고가 기준)
@@ -398,15 +494,17 @@ def update_open_positions_daily(
                 is_closed = True
                 new_status = "CLOSED"
                 close_reason = "TP2_TARGET"
-                exit_price = tp2_p
+                exit_price = max(open_p, tp2_p) if open_p is not None and open_p >= tp2_p else tp2_p
+                tp2_actual_gain = ((exit_price - entry_p) / entry_p) * 100.0
                 if is_tp1_hit:
-                    realized_pnl_pct = round(0.5 * tp1_gain_pct + 0.5 * tp2_gain_pct, 4)
+                    realized_pnl_pct = round(0.5 * tp1_gain_pct + 0.5 * tp2_actual_gain, 4)
                 else:
-                    realized_pnl_pct = tp2_gain_pct
+                    # C4: TP1 미도달 상태에서 TP2까지 폭등한 경우 50% TP1, 50% TP2 분할 정산 (+35%)
+                    realized_pnl_pct = round(0.5 * tp1_gain_pct + 0.5 * tp2_actual_gain, 4)
 
-            # 3. 1차 목표가(TP1) 도달 검사 (고가 기준)
-            elif high_p >= tp1_p:
-                if enable_partial_tp and not is_tp1_hit:
+            # 3. 1차 목표가(TP1) 도달 검사 (고가 기준 - 아직 TP1 미도달인 경우에만 발동)
+            elif high_p >= tp1_p and not is_tp1_hit:
+                if enable_partial_tp:
                     # [핵심 로직] 1차 50% 분할 익절 & 손절선 본전 상향 & 기한 40일 연장
                     is_tp1_hit = True
                     # 수수료/슬리피지를 감안한 무위험 본전가 (+0.5%)
@@ -417,11 +515,12 @@ def update_open_positions_daily(
                     alert_msg = (
                         f"🚀 <b>[분할익절 & 기한연장 알림] {ticker} 1차 목표가(TP1) 달성!</b>\n\n"
                         f"• <b>1차 50% 분할 익절 완료:</b> 실현 수익률 <code>+{tp1_gain_pct:.1f}%</code> (체결가: <code>${tp1_p:.2f}</code>)\n"
-                        f"• <b>잔여 50% 포지션 '무위험 Free-Ride 모드' 전환:</b>\n"
-                        f"  - <b>손절선 본전 상향:</b> <code>${sl_p:.2f}</code> ➔ <code>${new_sl:.2f}</code> (원금 100% 보존 완료 🛡️)\n"
+                        f"• <b>잔여 50% 포지션 '본전 보호 Free-Ride 모드' 전환:</b>\n"
+                        f"  - <b>보호 손절선 상향:</b> <code>${sl_p:.2f}</code> ➔ <code>${new_sl:.2f}</code> (본전 보호 모드, 갭하락 위험 유의 🛡️)\n"
                         f"  - <b>보유 기한 전격 연장:</b> 기존 20영업일 ➔ <b>최대 40영업일로 연장</b> (빅스윙 추세 추종)\n"
                         f"  - <b>2차 목표가:</b> TP2 <code>${tp2_p:.2f}</code> (+{tp2_gain_pct:.1f}%) 조준\n"
-                        f"• <i>이제 남은 물량은 손실 위험이 전혀 없는 완전 무위험 랠리 추종 상태입니다.</i>"
+                        f"• <i>1차 익절 완료 후 잔여 물량은 본전 보호(Free-Ride) 모드로 2차 목표가를 추종합니다.</i>"
+
                     )
                     alert_item = {
                         "trade_id": trade_id,
@@ -441,16 +540,16 @@ def update_open_positions_daily(
                         f"SL raised to ${new_sl:.2f}, max_days extended to {max_days}d"
                     )
                     sl_p = new_sl
-                elif not enable_partial_tp:
+                else:
                     # Legacy 100% 전량 익절 모드
                     is_closed = True
                     new_status = "CLOSED"
                     close_reason = "TP1_TARGET"
-                    exit_price = tp1_p
-                    realized_pnl_pct = tp1_gain_pct
+                    exit_price = max(open_p, tp1_p) if open_p is not None and open_p >= tp1_p else tp1_p
+                    realized_pnl_pct = round(((exit_price - entry_p) / entry_p) * 100.0, 4)
 
-            # 4. 보유 기한 만료 검사
-            elif holding_d >= max_days:
+            # 4. 보유 기한 만료 검사 (H2: TP1 분기와 독립적으로 반드시 평가)
+            if not is_closed and holding_d >= max_days:
                 is_closed = True
                 new_status = "CLOSED"
                 exit_price = close_p
@@ -458,7 +557,7 @@ def update_open_positions_daily(
                     realized_pnl_pct = round(0.5 * tp1_gain_pct + 0.5 * current_pnl_pct, 4)
                     close_reason = "TIMEOUT_40D"
                 else:
-                    realized_pnl_pct = current_pnl_pct
+                    realized_pnl_pct = round(current_pnl_pct, 4)
                     close_reason = "TIMEOUT_20D"
 
             if is_closed:
@@ -477,6 +576,7 @@ def update_open_positions_daily(
                     close_reason = %s,
                     tp1_hit = %s,
                     max_holding_days = %s,
+                    last_evaluated_date = %s,
                     updated_at = NOW()
                 WHERE trade_id = %s;
                 """
@@ -495,6 +595,7 @@ def update_open_positions_daily(
                         close_reason,
                         is_tp1_hit,
                         max_days,
+                        new_evaluated_date,
                         trade_id,
                     ),
                 )
@@ -527,6 +628,7 @@ def update_open_positions_daily(
                     stop_loss = %s,
                     tp1_hit = %s,
                     max_holding_days = %s,
+                    last_evaluated_date = %s,
                     updated_at = NOW()
                 WHERE trade_id = %s;
                 """
@@ -541,6 +643,7 @@ def update_open_positions_daily(
                         sl_p,
                         is_tp1_hit,
                         max_days,
+                        new_evaluated_date,
                         trade_id,
                     ),
                 )
@@ -557,6 +660,7 @@ def update_open_positions_daily(
                     "tp1_hit": is_tp1_hit,
                     "max_holding_days": max_days,
                     "is_free_ride": is_tp1_hit,
+                    "last_evaluated_date": str(new_evaluated_date) if new_evaluated_date else None,
                 })
 
     logger.info(

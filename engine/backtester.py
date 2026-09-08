@@ -82,8 +82,12 @@ def backtest_single_ticker(
     n_candles = len(df_calc)
 
     i = start_idx
-    while i < n_candles - 1:
+    while i < n_candles:
         if not in_position:
+            if i >= n_candles - 1:
+                # 마지막 봉에서는 익일 시가가 존재하지 않으므로 신규 진입 불가
+                break
+
             # 시점 i (완성봉) 기준 와이코프 매집 상태 평가
             sub_df = df_calc.iloc[: i + 1]
             setup_res = evaluate_wyckoff_setup(
@@ -94,7 +98,7 @@ def backtest_single_ticker(
                 params=params,
             )
 
-            if setup_res:
+            if setup_res and getattr(setup_res, "entry_eligible", True):
                 # 진입 조건 검사
                 passes_entry = False
                 if sweet_spot_only:
@@ -135,6 +139,8 @@ def backtest_single_ticker(
                             "entry_score": setup_res.score,
                             "stars_rating": setup_res.stars_rating,
                             "is_sweet_spot": setup_res.is_sweet_spot,
+                            "tp1_hit": False,
+                            "current_max_days": max_holding_days,
                         }
                         i += 1
                         continue
@@ -149,32 +155,67 @@ def backtest_single_ticker(
             open_price = float(curr_bar["open"])
             close_price = float(curr_bar["close"])
 
-            sl_hit = low_price <= entry_trade["stop_loss"]
-            tp_hit = high_price >= entry_trade["tp1"]
-            timeout_hit = holding_counter >= max_holding_days
+            tp1_target = entry_trade["tp1"]
+            tp2_target = entry_trade["tp2"]
+            tp1_gain_pct = ((tp1_target - entry_trade["entry_price"]) / entry_trade["entry_price"]) * 100.0
+            tp2_gain_pct = ((tp2_target - entry_trade["entry_price"]) / entry_trade["entry_price"]) * 100.0
 
             is_closed = False
             exit_price = 0.0
             close_reason = ""
+            pnl_pct = 0.0
 
-            # 보수적 판정: 동일 봉에 SL과 TP가 동시 도달 시 SL 우선 처리
-            if sl_hit:
+            # 1. 손절선(SL) 하회 검사 (저가 기준, 갭하락 시가 반영)
+            if low_price <= entry_trade["stop_loss"]:
                 is_closed = True
-                # 시가가 이미 SL보다 낮게 갭하락한 경우 시가 청산 반영
-                exit_price = min(open_price, entry_trade["stop_loss"])
-                close_reason = "STOP_LOSS"
-            elif tp_hit:
+                if open_price > 0 and open_price < entry_trade["stop_loss"]:
+                    exit_price = open_price
+                elif high_price < entry_trade["stop_loss"]:
+                    exit_price = open_price if open_price > 0 else high_price
+                else:
+                    exit_price = entry_trade["stop_loss"]
+
+                sl_gain_pct = ((exit_price - entry_trade["entry_price"]) / entry_trade["entry_price"]) * 100.0
+                if entry_trade["tp1_hit"]:
+                    # 1차 50%는 TP1(+20%), 잔여 50%는 본전 손절
+                    pnl_pct = round(0.5 * tp1_gain_pct + 0.5 * sl_gain_pct, 4)
+                    close_reason = "BREAKEVEN_SL"
+                else:
+                    pnl_pct = round(sl_gain_pct, 4)
+                    close_reason = "STOP_LOSS"
+
+            # 2. 2차 목표가(TP2) 도달 검사 (고가 기준)
+            elif high_price >= tp2_target:
                 is_closed = True
-                # 시가가 이미 TP보다 높게 갭상승한 경우 시가 청산 반영
-                exit_price = max(open_price, entry_trade["tp1"])
-                close_reason = "TP1_TARGET"
-            elif timeout_hit:
+                close_reason = "TP2_TARGET"
+                exit_price = max(open_price, tp2_target) if open_price >= tp2_target else tp2_target
+                tp2_actual_gain = ((exit_price - entry_trade["entry_price"]) / entry_trade["entry_price"]) * 100.0
+                if entry_trade["tp1_hit"]:
+                    pnl_pct = round(0.5 * tp1_gain_pct + 0.5 * tp2_actual_gain, 4)
+                else:
+                    # TP1 미도달 상태에서 TP2까지 폭등한 경우 50% TP1, 50% TP2 분할 정산 (+35%)
+                    pnl_pct = round(0.5 * tp1_gain_pct + 0.5 * tp2_actual_gain, 4)
+
+            # 3. 1차 목표가(TP1) 도달 검사 (고가 기준 - 2단계 분할익절 & Free-Ride 전환)
+            elif high_price >= tp1_target and not entry_trade["tp1_hit"]:
+                entry_trade["tp1_hit"] = True
+                breakeven_sl = round(entry_trade["entry_price"] * 1.005, 2)
+                entry_trade["stop_loss"] = max(entry_trade["stop_loss"], breakeven_sl)
+                entry_trade["current_max_days"] = 40  # 보유 기한 40영업일로 연장
+
+            # 4. 보유 기한 만료 검사 (H2: TP1 분기와 독립적으로 평가)
+            if not is_closed and holding_counter >= entry_trade["current_max_days"]:
                 is_closed = True
                 exit_price = close_price
-                close_reason = "TIMEOUT_20D"
+                curr_gain_pct = ((close_price - entry_trade["entry_price"]) / entry_trade["entry_price"]) * 100.0
+                if entry_trade["tp1_hit"]:
+                    pnl_pct = round(0.5 * tp1_gain_pct + 0.5 * curr_gain_pct, 4)
+                    close_reason = "TIMEOUT_40D"
+                else:
+                    pnl_pct = round(curr_gain_pct, 4)
+                    close_reason = "TIMEOUT_20D"
 
             if is_closed:
-                pnl_pct = ((exit_price - entry_trade["entry_price"]) / entry_trade["entry_price"]) * 100.0
                 trades.append(
                     SimulatedTrade(
                         ticker=ticker,
@@ -198,6 +239,41 @@ def backtest_single_ticker(
                 holding_counter = 0
 
         i += 1
+
+    # H4: 데이터셋 종료 시점까지 미청산된 포지션에 대한 Terminal Mark-to-Market 정산
+    if in_position and entry_trade:
+        last_bar = df_calc.iloc[-1]
+        last_date_str = pd.to_datetime(last_bar["datetime"]).strftime("%Y-%m-%d")
+        terminal_close = float(last_bar["close"])
+        tp1_gain_pct = ((entry_trade["tp1"] - entry_trade["entry_price"]) / entry_trade["entry_price"]) * 100.0
+        curr_gain_pct = ((terminal_close - entry_trade["entry_price"]) / entry_trade["entry_price"]) * 100.0
+
+        if entry_trade["tp1_hit"]:
+            pnl_pct = round(0.5 * tp1_gain_pct + 0.5 * curr_gain_pct, 4)
+            close_reason = "TERMINAL_MTM_PARTIAL"
+        else:
+            pnl_pct = round(curr_gain_pct, 4)
+            close_reason = "TERMINAL_MTM"
+
+        trades.append(
+            SimulatedTrade(
+                ticker=ticker,
+                entry_date=entry_trade["entry_date"],
+                entry_price=round(entry_trade["entry_price"], 2),
+                stop_loss=round(entry_trade["stop_loss"], 2),
+                tp1=round(entry_trade["tp1"], 2),
+                tp2=round(entry_trade["tp2"], 2),
+                exit_date=last_date_str,
+                exit_price=round(terminal_close, 2),
+                holding_days=holding_counter,
+                pnl_pct=round(pnl_pct, 2),
+                close_reason=close_reason,
+                entry_score=round(entry_trade["entry_score"], 1),
+                stars_rating=entry_trade["stars_rating"],
+                is_sweet_spot=entry_trade["is_sweet_spot"],
+            )
+        )
+        in_position = False
 
     return trades
 
@@ -263,10 +339,14 @@ def calculate_benchmark_metrics(
 
     avg_holding_days = round(sum(t.holding_days for t in trades) / total_trades, 1)
 
-    # 최대 낙폭 (MDD %) - 누적 자산 곡선 기준
+    # 최대 낙폭 (MDD %) - 시간순 정렬 개별 거래 복리 연쇄 곡선 기준 (Trade-Chain Compounding Drawdown)
+    # [ASTRA 감사관 유의사항]: 본 지표는 거래별 복리 낙폭(Sequential Trade-Chain Drawdown)이며,
+    # 현금 비중 및 동시 다발적 분산 포지션을 반영한 시계열 포트폴리오 NAV(Net Asset Value) MDD와는 수학적 차이가 있습니다.
+    # 진정한 포트폴리오 NAV MDD 산출은 Pillar 4 Shadow 모의 체결 원장 엔진에서 일별/장중 단위로 정밀 산출됩니다.
+    sorted_trades = sorted(trades, key=lambda t: (t.exit_date or t.entry_date, t.entry_date))
     equity = 100.0
     equity_curve = [equity]
-    for t in trades:
+    for t in sorted_trades:
         equity *= 1.0 + (t.pnl_pct / 100.0)
         equity_curve.append(equity)
 
@@ -445,18 +525,24 @@ def compare_and_promote(
 
     if gate_failures:
         reason = f"❌ [게이트 탈락] 3대 벤치마크 기준 미충족: {', '.join(gate_failures)}"
-        # 탈락하더라도 기록은 남김 (is_champion=False)
+        # 탈락 시 반드시 is_champion = False 강제 보장 후 기록
+        challenger_result.is_champion = False
         save_benchmark_to_db(challenger_result)
         return False, reason
+
 
     # 2. 기존 챔피언과의 비교
     champion = get_current_champion()
     if champion is None:
-        # 기존 챔피언이 없으면 3대 게이트 통과 즉시 챔피언 등극
-        challenger_result.is_champion = True
+        # 기존 챔피언이 없으면 3대 게이트 통과 시 auto_promote=True일 때만 챔피언 등극
+        challenger_result.is_champion = auto_promote
         new_id = save_benchmark_to_db(challenger_result)
-        reason = f"🏆 [신규 챔피언 등극] 기존 챔피언이 없으며, 3대 게이트를 완벽히 통과하여 신규 챔피언으로 등록되었습니다! (ID: {new_id})"
-        return True, reason
+        if auto_promote:
+            set_champion(new_id)
+            reason = f"🏆 [신규 챔피언 등극] 기존 챔피언이 없으며, 3대 게이트를 완벽히 통과하여 신규 챔피언으로 등록되었습니다! (ID: {new_id})"
+        else:
+            reason = f"ℹ️ [신규 챔피언 후보] auto_promote=False 이므로 신규 챔피언으로 승격되지 않았습니다. (ID: {new_id})"
+        return auto_promote, reason
 
     # 기존 챔피언과 성과 비교
     champ_expectancy = float(champion["expectancy_pct"])
@@ -467,15 +553,19 @@ def compare_and_promote(
     is_pf_competitive = challenger_result.profit_factor >= champ_pf * 0.95
 
     if is_expectancy_better and is_pf_competitive:
-        challenger_result.is_champion = True
+        challenger_result.is_champion = auto_promote
         new_id = save_benchmark_to_db(challenger_result)
         if auto_promote:
             set_champion(new_id)
-        reason = (
-            f"🏆 [챔피언 승격 성공!] 챌린저 모델이 기대값({challenger_result.expectancy_pct:+.2f}% > {champ_expectancy:+.2f}%) "
-            f"및 손익비({challenger_result.profit_factor:.2f} vs {champ_pf:.2f})에서 우위를 입증하여 신규 챔피언으로 승격되었습니다!"
-        )
-        return True, reason
+            reason = (
+                f"🏆 [챔피언 승격 성공!] 챌린저 모델이 기대값({challenger_result.expectancy_pct:+.2f}% > {champ_expectancy:+.2f}%) "
+                f"및 손익비({challenger_result.profit_factor:.2f} vs {champ_pf:.2f})에서 우위를 입증하여 신규 챔피언으로 승격되었습니다!"
+            )
+        else:
+            reason = (
+                f"ℹ️ [승격 적격 확인] 챌린저 모델이 기존 챔피언보다 우수하지만 auto_promote=False 이므로 승격되지 않았습니다. (ID: {new_id})"
+            )
+        return auto_promote, reason
     else:
         challenger_result.is_champion = False
         save_benchmark_to_db(challenger_result)
@@ -510,3 +600,42 @@ def print_comparison_table(champion: Optional[Dict[str, Any]], challenger: Bench
     print(f"| {'평균 보유일수':<24} | {'<= 20일':<14} | {c_hold:<16} | {challenger.avg_holding_days:.1f}d{'':<12} |")
     print(f"| {'최대 낙폭 (MDD)':<24} | {'최소화':<14} | {c_mdd:<16} | {challenger.max_drawdown_pct:.1f}%{'':<11} |")
     print("=" * 78)
+
+
+def evaluate_strategy_gate(
+    strategy_version: str = "wyckoff_v2.0_full_swing",
+    params: Optional[WyckoffParams] = None,
+    tickers: Optional[List[str]] = None,
+    limit_candles: int = 250,
+    auto_promote: bool = False,
+) -> Tuple[bool, str, BenchmarkResult]:
+    """
+    PROJECT_STATUS.md 명세에 따른 전략 게이트 검증 및 챔피언 비교 실행 함수.
+    
+    Args:
+        strategy_version: 검증할 전략 버전명
+        params: 전략 파라미터 (None이면 기본 파라미터)
+        tickers: 백테스트 대상 종목 (None이면 대표 10개 종목)
+        limit_candles: 캔들 수 (기본 250일치, 약 1년)
+        auto_promote: 챔피언 승격 조건 충족 시 자동 승격 여부
+        
+    Returns:
+        Tuple[bool, str, BenchmarkResult]: (승격/통과 여부, 사유, 벤치마크 결과)
+    """
+    if tickers is None:
+        tickers = ["AAPL", "NVDA", "TSLA", "MSFT", "AMZN", "GOOGL", "META", "AMD", "PLTR", "JPM"]
+    if params is None:
+        params = WyckoffParams()
+
+    bench_result, trades = run_backtest_on_tickers(
+        tickers=tickers,
+        strategy_version=strategy_version,
+        params=params,
+        limit_candles=limit_candles,
+        sweet_spot_only=False,
+    )
+    current_champ = get_current_champion()
+    print_comparison_table(current_champ, bench_result)
+    promoted, msg = compare_and_promote(bench_result, auto_promote=auto_promote)
+    logger.info(f"Gate evaluation [{strategy_version}]: promoted={promoted}, msg={msg}")
+    return promoted, msg, bench_result

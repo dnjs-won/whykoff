@@ -46,7 +46,7 @@ class WyckoffParams:
     sweet_spot_max_score: float = 78.0  # 5성 스윗스팟 최대 점수
     sweet_spot_max_box: float = 18.0    # 5성 스윗스팟 박스권 진폭 상한
     overextended_score: float = 85.0    # 2성 과열권 경고 점수
-    enable_overhead_gate: bool = False  # 상단 장애물 필터 (Overhead Space Gate) 활성화 여부
+    enable_overhead_gate: bool = True   # 상단 장애물 필터 (Overhead Space Gate) 활성화 여부 (Champion 명세 기본 적용)
     min_overhead_space_pct: float = 5.0 # 상단 저항선까지 최소 잔여 공간 (%)
     require_prev_close_poc: bool = False # 직전 캔들 POC 지지 안착 확인 (Close >= POC * buffer)
     require_ma5_recovery: bool = False   # 안전벨트: 바닥 반등 시 일봉 5선 회복 필수
@@ -121,6 +121,7 @@ def evaluate_wyckoff_setup(
 
     score = 0.0
     reasons: List[str] = []
+    failed_gates: List[str] = []
     is_failed = False
 
     # ----------------------------------------------------
@@ -132,6 +133,7 @@ def evaluate_wyckoff_setup(
 
     if drop_rate > params.min_drop_rate:
         is_failed = True
+        failed_gates.append("DROP_RATE")
         reasons.append(f"조건 1 탈락: 120일 고점 대비 하락폭 미달 (낙폭 {drop_rate:.1f}%, 기준 {params.min_drop_rate:.1f}% 이하)")
     else:
         reasons.append(f"조건 1 통과: 120일 고점 대비 충분한 기간 조정 (낙폭 {drop_rate:.1f}%)")
@@ -149,6 +151,7 @@ def evaluate_wyckoff_setup(
         reasons.append(f"조건 2 통과 (+20점): 30일 박스권 에너지 수렴 (진폭 {box_range:.1f}%)")
     else:
         is_failed = True
+        failed_gates.append("BOX_RANGE")
         reasons.append(f"조건 2 탈락: 30일 박스권 변동성 과대 (진폭 {box_range:.1f}%, 기준 {params.max_box_range:.1f}% 이하)")
 
     # ----------------------------------------------------
@@ -160,6 +163,7 @@ def evaluate_wyckoff_setup(
 
     if slope_ma20 < params.ma20_slope_min:
         is_failed = True
+        failed_gates.append("MA20_SLOPE")
         reasons.append(f"조건 3 탈락: 20일선 급락 추세 (10일 기울기 {slope_ma20:.2f}%, 기준 {params.ma20_slope_min:.1f}% 이상)")
     elif params.ma20_slope_min <= slope_ma20 <= params.ma20_slope_max:
         score += 15.0
@@ -182,6 +186,7 @@ def evaluate_wyckoff_setup(
 
     if current_price < poc_support_threshold or not prev_poc_ok:
         is_failed = True
+        failed_gates.append("POC_SUPPORT")
         if current_price < poc_support_threshold:
             reasons.append(f"조건 4 탈락: POC 매물대 저항 하방 갇힘 (현재가 ${current_price:.2f} < POC 기준선 ${poc_support_threshold:.2f})")
         else:
@@ -233,6 +238,7 @@ def evaluate_wyckoff_setup(
     # 안전벨트 확인: 바닥 반등 시 일봉 5선 회복 필수
     if params.require_ma5_recovery and current_price < ma5_val:
         is_failed = True
+        failed_gates.append("MA5_RECOVERY")
         reasons.append(f"안전벨트 탈락: 일봉 5선(${ma5_val:.2f}) 미회복으로 바닥 반등 진입 차단 (현재가 ${current_price:.2f})")
 
     if current_price >= ma5_val and current_price >= ma20_val:
@@ -250,12 +256,13 @@ def evaluate_wyckoff_setup(
         reasons.append(f"조건 6-2 미충족 (+0점): MACD 히스토그램 둔화 ({macd_hist_now:+.3f})")
 
     # 총점 상한 클리핑 (최대 100.0)
-    technical_score = min(100.0, float(score))
+    raw_score = float(score)
+    technical_score = min(100.0, raw_score)
 
     # ----------------------------------------------------
     # [상단 장애물 필터 (Overhead Space Gate)]
     # 1. 캔들이 구름대 아래에 위치한 역배열 종목:
-    #    - 1차 상단 저항선 = min(구름대 하단, 일봉 60선)
+    #    - 1차 상단 저항선 = min(구름대 하단, 일봉 60선 중 현재가 상방 후보)
     #    - 잔여 공간 = ((저항선 - 현재가) / 현재가) * 100
     #    - 최소 +5.0% 이상 비어있지 않으면 진입 즉시 차단 (Return None)
     # 2. 정배열 눌림목: 구름대 위에 안착한 상태 -> 저항 필터 제외
@@ -268,29 +275,46 @@ def evaluate_wyckoff_setup(
     if params.enable_overhead_gate and cloud_bottom_val is not None and cloud_bottom_val > 0:
         # 역배열 (구름대 하단 하회 종목)
         if current_price < cloud_bottom_val:
-            if ma60_val is not None and ma60_val > 0:
-                res_line = min(cloud_bottom_val, ma60_val)
-            else:
-                res_line = cloud_bottom_val
+            overhead_candidates = [r for r in [cloud_bottom_val, ma60_val] if r is not None and r > current_price]
+            if overhead_candidates:
+                res_line = min(overhead_candidates)
+                overhead_space_pct = ((res_line - current_price) / current_price) * 100.0
 
-            overhead_space_pct = ((res_line - current_price) / current_price) * 100.0
-
-            if overhead_space_pct < params.min_overhead_space_pct:
-                logger.debug(
-                    f"[{ticker}] Overhead Space Gate blocked: space {overhead_space_pct:.1f}% "
-                    f"< {params.min_overhead_space_pct:.1f}% (Res: ${res_line:.2f}, Price: ${current_price:.2f})"
-                )
-                if strict_filter:
-                    return None
-                else:
+                if overhead_space_pct < params.min_overhead_space_pct:
+                    logger.debug(
+                        f"[{ticker}] Overhead Space Gate blocked: space {overhead_space_pct:.1f}% "
+                        f"< {params.min_overhead_space_pct:.1f}% (Res: ${res_line:.2f}, Price: ${current_price:.2f})"
+                    )
                     is_failed = True
+                    failed_gates.append("OVERHEAD_SPACE")
                     reasons.append(
                         f"상단 저항 게이트 차단: 저항선(${res_line:.2f})까지 잔여공간 {overhead_space_pct:+.1f}% "
                         f"(기준 +{params.min_overhead_space_pct:.1f}% 미달, 상단 저항에 막힘 ⚠️)"
                     )
+                    if strict_filter:
+                        return None
+                else:
+                    reasons.append(
+                        f"상단 저항 게이트 통과: 저항선(${res_line:.2f})까지 잔여공간 +{overhead_space_pct:.1f}% (기준 +{params.min_overhead_space_pct:.1f}% 이상)"
+                    )
+            else:
+                reasons.append("상단 저항 게이트 예외: 가격 상방 주요 저항선 부재")
+        elif cloud_top_val is not None and current_price < cloud_top_val:
+            # 구름대 내부: 구름대 상단(cloud_top)이 1차 저항선
+            res_line = cloud_top_val
+            overhead_space_pct = ((res_line - current_price) / current_price) * 100.0
+            if overhead_space_pct < params.min_overhead_space_pct:
+                is_failed = True
+                failed_gates.append("OVERHEAD_SPACE")
+                reasons.append(
+                    f"상단 저항 게이트 차단: 구름대 내부 저항(${res_line:.2f})까지 잔여공간 {overhead_space_pct:+.1f}% "
+                    f"(기준 +{params.min_overhead_space_pct:.1f}% 미달, 상단 저항에 막힘 ⚠️)"
+                )
+                if strict_filter:
+                    return None
             else:
                 reasons.append(
-                    f"상단 저항 게이트 통과: 저항선(${res_line:.2f})까지 잔여공간 +{overhead_space_pct:.1f}% (기준 +{params.min_overhead_space_pct:.1f}% 이상)"
+                    f"상단 저항 게이트 통과: 구름대 상단(${res_line:.2f})까지 잔여공간 +{overhead_space_pct:.1f}% (기준 +{params.min_overhead_space_pct:.1f}% 이상)"
                 )
         else:
             reasons.append(f"상단 저항 게이트 예외: 구름대(${cloud_bottom_val:.2f}) 상방 안착 (저항 필터 제외)")
@@ -303,9 +327,13 @@ def evaluate_wyckoff_setup(
     stars_rating = 1
     setup_type = "WYCKOFF_WEAK_SETUP"
 
-    if strict_filter and is_failed:
+    # 진입 적격성 (Entry Eligibility): 필수 게이트를 모두 통과하고 과열이 아닐 때만 True
+    entry_eligible = (not is_failed) and (technical_score < params.overextended_score)
+
+    if is_failed:
         stars_rating = 1
         setup_type = "WYCKOFF_FILTER_REJECTED"
+        is_sweet_spot = False
     else:
         if (
             params.sweet_spot_min_score <= technical_score <= params.sweet_spot_max_score
@@ -362,4 +390,7 @@ def evaluate_wyckoff_setup(
         cloud_top=round(cloud_top_val, 2) if cloud_top_val is not None else None,
         cloud_bottom=round(cloud_bottom_val, 2) if cloud_bottom_val is not None else None,
         overhead_space_pct=round(overhead_space_pct, 1) if overhead_space_pct is not None else None,
+        entry_eligible=entry_eligible,
+        failed_gates=failed_gates,
+        raw_score=round(raw_score, 2),
     )

@@ -159,6 +159,7 @@ CREATE TABLE IF NOT EXISTS active_trades (
     reconfirmed_count INTEGER DEFAULT 1,  -- OPEN 중 추가 스캔된 횟수
     tp1_hit BOOLEAN DEFAULT FALSE,        -- 1차 목표가(TP1) 도달 및 50% 분할 익절 완료 여부
     max_holding_days INTEGER DEFAULT 20,  -- 보유 기한 (기본 20일, TP1 도달 시 40일 연장)
+    last_evaluated_date DATE,             -- 마지막 주가 평가 일자 (멱등성 보장)
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -190,3 +191,4 @@ CREATE TABLE IF NOT EXISTS strategy_benchmarks (
 -- 10. 무중단 스키마 증분 마이그레이션 (기존 테이블 신규 컬럼 안전 추가)
 ALTER TABLE active_trades ADD COLUMN IF NOT EXISTS tp1_hit BOOLEAN DEFAULT FALSE;
 ALTER TABLE active_trades ADD COLUMN IF NOT EXISTS max_holding_days INTEGER DEFAULT 20;
+ALTER TABLE active_trades ADD COLUMN IF NOT EXISTS last_evaluated_date DATE;

@@ -1,0 +1,117 @@
+{
+  "fixed_scenario_groups": {
+    "ineligible_daily": "DISQUALIFIED",
+    "equal_volume": "not triggered",
+    "post_st_breakdown": "INVALIDATED",
+    "sl_at_or_above_entry": "approved=False (no ValueError)",
+    "independent_caps_with_complete_inputs": [
+      "name",
+      "gross",
+      "open_risk"
+    ],
+    "failed_gate_champion_flag": false,
+    "same_date_committed_replay": "OPEN"
+  },
+  "remaining_observations": {
+    "same_source_bar_under_new_asof_closes": {
+      "trade_id": 1,
+      "ticker": "AUDIT",
+      "entry_date": "2025-01-01",
+      "exit_date": "2025-02-04",
+      "entry_price": 100.0,
+      "exit_price": 100.5,
+      "realized_pnl_pct": 10.25,
+      "close_reason": "BREAKEVEN_SL",
+      "holding_days": 3,
+      "tp1_hit": true,
+      "max_holding_days": 40
+    },
+    "backdated_request_reprocesses_latest_bar": {
+      "trade_id": 1,
+      "ticker": "AUDIT",
+      "entry_date": "2025-01-01",
+      "exit_date": "2025-02-02",
+      "entry_price": 100.0,
+      "exit_price": 100.5,
+      "realized_pnl_pct": 10.25,
+      "close_reason": "BREAKEVEN_SL",
+      "holding_days": 3,
+      "tp1_hit": true,
+      "max_holding_days": 40
+    },
+    "mdd_still_trade_chain": {
+      "reported_pct": 10.0,
+      "nav_pct_for_offsetting_equal_positions": 0.0
+    },
+    "spring_breakdown_before_st_ignored": {
+      "ticker": "AUDIT",
+      "triggered": true,
+      "state": "ST_CONFIRMED",
+      "hourly_close": 100.0,
+      "buy_stop": 100.01,
+      "buy_limit": 100.21,
+      "hourly_stop_loss": 98.0,
+      "hourly_risk_pct": 2.01,
+      "spring_low": 98.5,
+      "st_low": 99.0,
+      "reasons": [
+        "1H Spring 포착: 베이스 저점 $99.00 하향 이탈 후 복구 (저점 $98.50, 종가 $99.20)",
+        "1H ST 확정: Spring 저점($98.50) 상회 지지 (ST 저점 $99.00, 거래량 500 < 800 수렴)"
+      ]
+    },
+    "invalidated_st_revives_when_latest_atr_expands": {
+      "atr_before": 2.0,
+      "atr_after": 4.0,
+      "breach_low": 97.9,
+      "result": {
+        "ticker": "AUDIT",
+        "triggered": true,
+        "state": "ST_CONFIRMED",
+        "hourly_close": 100.0,
+        "buy_stop": 100.01,
+        "buy_limit": 100.41,
+        "hourly_stop_loss": 97.5,
+        "hourly_risk_pct": 2.51,
+        "spring_low": 98.5,
+        "st_low": 99.0,
+        "reasons": [
+          "1H Spring 포착: 베이스 저점 $99.00 하향 이탈 후 복구 (저점 $98.50, 종가 $99.20)",
+          "1H ST 확정: Spring 저점($98.50) 상회 지지 (ST 저점 $99.00, 거래량 500 < 800 수렴)"
+        ]
+      }
+    },
+    "missing_existing_risk_defaults_to_zero": {
+      "existing_structural_risk": 2400.0,
+      "cap_dollars": 2000.0,
+      "new_allocation": {
+        "ticker": "AUDIT",
+        "entry_price": 100.0,
+        "stop_loss": 95.0,
+        "effective_risk_pct": 6.0,
+        "target_weight": 4.1,
+        "allocated_capital": 4100.0,
+        "allocated_shares": 41,
+        "risk_dollars": 246.0,
+        "subsector": "TECH",
+        "approved": true,
+        "rejection_reason": null
+      }
+    },
+    "parallel_intents_need_atomic_reservation": {
+      "combined_risk": 2192.0,
+      "cap": 2000.0
+    },
+    "non_connection_setup_error_hidden_as_skip": true
+  },
+  "reviewed_file_sha256": {
+    "engine/hourly_trigger.py": "e26645e469a1168137fa3645e4ffc269e4197ebb412ae592242f40969c9973b2",
+    "engine/risk_allocator.py": "0dfc05ff538334b3bbf643169f78bc00014e962936d87397c49b914e1700614e",
+    "engine/backtester.py": "76228cb361b0a770bec34cf4c4a0d363c7afba03809e3ce464b2505bcb14e5a7",
+    "services/trade_tracker.py": "0bdde48bf0f07d3dce665417c6385615083305bf4677e7d88ac7cf183b5e67ea",
+    "tests/test_audit_remediation.py": "6d7f8e91d7404b67bd873d2b588c36ab152849448864669fd851af5f0c28215f",
+    "tests/test_trade_tracker.py": "b46f4a9c987ffca33cf7b987344196d5bd0a986bb5f15e2dfd523d833fe932e9",
+    "tests/test_ticker_inspector.py": "f262528091774afefe8b03d4a6b16707ce01fbdc65c3e1667c60237e631d8bf9",
+    "services/briefing_service.py": "ad468a604f7421b394ab1dea081e115719fdaa90ff8c377a29edb7217c77c59c",
+    "GPT6_ASTRA_VERIFICATION_REQUEST.md": "932a6248596cad65d8aa442fa21b1d6cc5d4abddc79399bd9d2d0635b279345e"
+  }
+}
