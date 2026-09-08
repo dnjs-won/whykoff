@@ -133,7 +133,7 @@ def inspect_single_ticker(
     if not is_box_ok:
         disqualification_reasons.append(
             f"30일 박스권 진폭 과대 (현재 {box_range_pct:.1f}% > 기준 {params.max_box_range:.1f}% 이하) "
-            f"➔ 변동성이 커서 톱질(Whipsaw) 휩소 손절 위험 높음"
+            f"➔ 변동성이 커서 휩소(Whipsaw)  손절 위험 높음"
         )
 
     # ③ 20일선 기울기 검사
